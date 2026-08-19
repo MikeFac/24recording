@@ -1,5 +1,6 @@
 package tel.fouryou.blackboxreplacement
 
+import android.annotation.SuppressLint
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
@@ -52,6 +53,9 @@ class AudioRecorderEngine(
     private var timelineAnchorWallClockMs = 0L
     private var timelineAnchorElapsedNanos = 0L
 
+    // CaptureService verifies RECORD_AUDIO immediately before calling this method.
+    // A permission revoked during startup throws here and is handled as a service error.
+    @SuppressLint("MissingPermission")
     fun start() {
         check(outputDirectory.exists() || outputDirectory.mkdirs()) {
             "Could not create audio output directory"

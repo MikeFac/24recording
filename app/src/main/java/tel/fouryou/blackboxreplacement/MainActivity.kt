@@ -82,6 +82,14 @@ class MainActivity : Activity() {
         }
         content.addView(stopButton, matchWrap())
 
+        val visibleModeButton = Button(this).apply {
+            text = "Open visible recording mode"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, VisibleRecordingActivity::class.java))
+            }
+        }
+        content.addView(visibleModeButton, matchWrap())
+
         val guideButton = Button(this).apply {
             text = "Legal and permission guide"
             setOnClickListener {
@@ -120,6 +128,7 @@ class MainActivity : Activity() {
         } else {
             startService(intent)
         }
+        startActivity(Intent(this, VisibleRecordingActivity::class.java))
     }
 
     private fun showLegalAcknowledgement() {
