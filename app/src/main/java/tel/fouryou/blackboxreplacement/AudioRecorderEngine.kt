@@ -28,7 +28,8 @@ class AudioRecorderEngine(
     private val repository: ChunkRepository,
     private val onChunkCompleted: (CompletedChunk) -> Unit,
     private val onHealthChanged: (Health) -> Unit,
-    private val onFailure: (Throwable) -> Unit
+    private val onFailure: (Throwable) -> Unit,
+    private val frameRouter: AudioFrameRouter = AudioFrameRouter()
 ) {
     data class Health(
         val inputUnderruns: Long = 0,
@@ -119,6 +120,7 @@ class AudioRecorderEngine(
         check(encodeThread?.isAlive != true) { "Audio encoder thread did not finalize" }
         audioRecord?.release()
         audioRecord = null
+        frameRouter.close()
         terminalFailure.get()?.let { throw IllegalStateException("Audio recording failed", it) }
     }
 
@@ -126,6 +128,7 @@ class AudioRecorderEngine(
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val pcm = ByteArray(FRAME_BYTES)
         var filled = 0
+        var frameSequence = 0L
         var frameStartedAtElapsedNanos = SystemClock.elapsedRealtimeNanos()
         try {
             while (!stopRequested.get()) {
@@ -146,6 +149,13 @@ class AudioRecorderEngine(
                             onHealthChanged(health)
                             error("PCM queue overflow; continuous capture can no longer be guaranteed")
                         }
+                        frameRouter.offer(
+                            AudioFrame(
+                                sequence = frameSequence++,
+                                startedAtElapsedNanos = frame.startedAtElapsedNanos,
+                                pcm16Mono16Khz = frame.bytes
+                            )
+                        )
                         filled = 0
                     }
                     stopRequested.get() -> break

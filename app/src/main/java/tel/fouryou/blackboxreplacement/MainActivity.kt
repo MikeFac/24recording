@@ -13,12 +13,15 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.Spinner
 import android.widget.TextView
+import android.widget.ArrayAdapter
 
 class MainActivity : Activity() {
     private lateinit var stateText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var transcriptionModelSpinner: Spinner
     private var startAfterPermissionGrant = false
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
@@ -105,6 +108,38 @@ class MainActivity : Activity() {
         }
         content.addView(guideButton, matchWrap())
 
+        val transcriptionLabel = TextView(this).apply {
+            text = "On-device live transcription"
+            setPadding(0, 24, 0, 4)
+        }
+        content.addView(transcriptionLabel, matchWrap())
+
+        transcriptionModelSpinner = Spinner(this).apply {
+            val models = listOf(
+                LocalTranscriptionModel.OFF,
+                LocalTranscriptionModel.MOONSHINE_TINY,
+                LocalTranscriptionModel.ZIPFORMER_STREAMING
+            )
+            adapter = ArrayAdapter(
+                this@MainActivity,
+                android.R.layout.simple_spinner_item,
+                models.map { transcriptionLabel(it) }
+            ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
+            setSelection(models.indexOf(TranscriptionPreferences.getModel(this@MainActivity)))
+            setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
+                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+                override fun onItemSelected(
+                    parent: android.widget.AdapterView<*>?,
+                    view: View?,
+                    position: Int,
+                    id: Long
+                ) {
+                    TranscriptionPreferences.setModel(this@MainActivity, models[position])
+                }
+            })
+        }
+        content.addView(transcriptionModelSpinner, matchWrap())
+
         val note = TextView(this).apply {
             text = "Recording is deliberately visible. The notification remains active while audio capture is running."
             setPadding(0, 24, 0, 0)
@@ -128,6 +163,14 @@ class MainActivity : Activity() {
             requestRequiredPermissionsIfNeeded()
             return
         }
+        TranscriptionPreferences.setModel(
+            this,
+            listOf(
+                LocalTranscriptionModel.OFF,
+                LocalTranscriptionModel.MOONSHINE_TINY,
+                LocalTranscriptionModel.ZIPFORMER_STREAMING
+            )[transcriptionModelSpinner.selectedItemPosition]
+        )
         val intent = Intent(this, CaptureService::class.java)
             .setAction(CaptureService.ACTION_START)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -225,6 +268,12 @@ class MainActivity : Activity() {
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
     )
+
+    private fun transcriptionLabel(model: LocalTranscriptionModel): String = when (model) {
+        LocalTranscriptionModel.OFF -> "Off"
+        LocalTranscriptionModel.MOONSHINE_TINY -> "Moonshine Tiny · local"
+        LocalTranscriptionModel.ZIPFORMER_STREAMING -> "Zipformer · local streaming"
+    }
 
     companion object {
         private const val REQUEST_PERMISSIONS = 100

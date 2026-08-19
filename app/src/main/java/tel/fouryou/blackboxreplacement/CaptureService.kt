@@ -24,6 +24,7 @@ class CaptureService : Service() {
     private val mainHandler = android.os.Handler(Looper.getMainLooper())
     private lateinit var repository: ChunkRepository
     private var engine: AudioRecorderEngine? = null
+    private var frameRouter: AudioFrameRouter? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var sessionId: String? = null
     private val terminalHandled = AtomicBoolean(false)
@@ -87,6 +88,27 @@ class CaptureService : Service() {
                 sessionId = newSessionId
                 repository.createSession(newSessionId, startedAt)
                 acquireWakeLock()
+                val router = AudioFrameRouter(
+                    onConsumerFailure = { name, error ->
+                        mainHandler.post {
+                            updateNotification("Recording · $name unavailable")
+                        }
+                    }
+                )
+                val transcriptionProvider = runCatching {
+                    TranscriptionProviderFactory.create(
+                        context = this,
+                        mode = TranscriptionMode.ON_DEVICE_SHERPA_ONNX,
+                        model = TranscriptionPreferences.getModel(this),
+                        onTranscript = { event ->
+                            if (event.isFinal) updateNotification("Recording · live transcription active")
+                        }
+                    )
+                }.getOrElse {
+                    DisabledTranscriptionProvider(TranscriptionMode.ON_DEVICE_SHERPA_ONNX)
+                }
+                router.subscribe("transcription", transcriptionProvider)
+                frameRouter = router
                 val outputDirectory = File(filesDir, "audio/$newSessionId")
                 engine = AudioRecorderEngine(
                     outputDirectory = outputDirectory,
@@ -100,7 +122,8 @@ class CaptureService : Service() {
                     },
                     onFailure = { error ->
                         mainHandler.post { handleEngineFailure(error) }
-                    }
+                    },
+                    frameRouter = router
                 )
                 engine!!.start()
                 setState(CaptureState.RECORDING, startedAt = startedAt, session = newSessionId)
@@ -143,6 +166,7 @@ class CaptureService : Service() {
     private fun stopEngineIfNeeded() {
         engine?.stop()
         engine = null
+        frameRouter = null
     }
 
     private fun handleEngineFailure(error: Throwable) {
