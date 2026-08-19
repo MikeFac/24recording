@@ -72,7 +72,9 @@ The following placeholders must be completed before data leaves a pilot device:
 
 ### Current v0.1 behavior
 
-The current implementation stores completed audio files and chunk metadata in app-private storage on the Android device. It does not yet upload, clean, transcribe, or disclose audio to a cloud service. This notice must be updated and shown before any of those capabilities are enabled.
+The Android application stores completed audio files and chunk metadata in app-private storage on the device. It does not yet upload, clean, transcribe, or disclose audio to a cloud service.
+
+The repository also contains a developer-operated local processing proof. It processes only an audio file deliberately supplied to its command-line tool, preserves that original, and writes the cleaned derivative and optional transcript to a local output directory. It is not invoked by the Android app and does not upload audio. This notice must be updated and shown before processing is enabled in the app or any cloud service.
 
 ### Notice required before cloud processing
 

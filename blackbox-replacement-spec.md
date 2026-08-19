@@ -445,6 +445,21 @@ Add device registration, resumable upload, checksum acknowledgment, offline queu
 
 Add decoding, conservative cleanup, VAD, `faster-whisper`, transcript storage, playback alignment, and retryable workers.
 
+#### Phase C implementation decision — local processing proof
+
+The first Phase C implementation is a local command-line worker that uses the same boundaries intended for the later queued server worker. This permits repeatable processing and quality testing before upload infrastructure is available.
+
+- Preserve the source M4A byte-for-byte and verify its SHA-256 before and after processing.
+- Decode to mono 48 kHz 16-bit PCM for enhancement.
+- Use DeepFilterNet as the initial speech-enhancement adapter with delay compensation enabled and an initial conservative 12 dB attenuation limit. The proof runs enhancement on every sample so original-versus-cleaned quality can be measured; production must add a measured noise gate before selecting a cleaned derivative. Benchmark RNNoise later as a lower-cost alternative; the processing use case must not depend on either implementation.
+- Apply the 70 Hz high-pass and anti-clipping output stage after enhancement, then create a mono 16 kHz FLAC cleaned derivative for the speech pipeline.
+- Use `faster-whisper` 1.2.x with its integrated Silero VAD for the first transcription proof. Begin with the `small` model, CPU `int8` for local development, and retain model/device/compute settings in the processing manifest.
+- Never silently fall back from denoising to an uncleaned derivative. Missing tools or failed enhancement fail the job visibly and leave the original untouched.
+- Write outputs through a staging directory and publish a manifest only after every requested stage succeeds.
+- Treat background speech, television dialogue, and sung vocals as unresolved: denoising is not speaker isolation.
+
+The acceptance corpus must include quiet speech, fan or air-conditioner noise, pocket/clothing movement, walking near traffic, and distant speech with television or music. Compare Whisper word error rate and manual intelligibility for original versus cleaned audio. A cleanup configuration is rejected if it worsens important-word recognition, clips speech, changes duration beyond the documented algorithmic tolerance, or misaligns transcript timestamps by more than 250 ms.
+
 ### Phase D — Pilot hardening
 
 Qualify multiple Australian Android models, add battery/storage/microphone diagnostics, implement deletion/export, complete consent materials, and conduct real-world pilot tests.

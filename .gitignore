@@ -16,6 +16,16 @@ secrets.properties
 .cxx/
 .externalNativeBuild/
 
+# Python processing worker
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ruff_cache/
+dist/
+processing/output/
+processing/.tools/
+
 # OS/editor noise
 .DS_Store
 *~
