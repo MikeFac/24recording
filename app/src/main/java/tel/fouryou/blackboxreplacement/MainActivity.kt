@@ -32,6 +32,13 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         CaptureService.reconcileStaleProcessState(this)
         setContentView(createContent())
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
     }
 
     override fun onResume() {
@@ -147,7 +154,20 @@ class MainActivity : Activity() {
     }
 
     private fun stopRecording() {
-        startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
+        showStopConfirmation()
+    }
+
+    private fun showStopConfirmation() {
+        if (!CaptureService.isRecording(this)) return
+        StopConfirmation.show(this) {
+            startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
+        }
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action != StopConfirmation.ACTION_REQUEST_STOP) return
+        intent.action = null
+        showStopConfirmation()
     }
 
     private fun hasRequiredPermissions(): Boolean {

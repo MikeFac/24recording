@@ -52,7 +52,7 @@ class LegalAndPermissionsActivity : Activity() {
 
 5. Verify: confirm the screen says RECORDING, Android shows the microphone privacy indicator and persistent notification, and the chunk/error counters remain healthy.
 
-6. Stop correctly: use Stop recording in the app or notification and wait for STOPPED so the current M4A file can be finalized.
+6. Stop correctly: choose Stop recording in the app or notification, enter the four-digit stop confirmation code (2468 in this pilot), and wait for STOPPED so the current M4A file can be finalized. A stray tap or long-press cannot stop recording by itself.
             """.trimIndent()
         )
 

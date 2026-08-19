@@ -41,9 +41,16 @@ class VisibleRecordingActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        setContentView(createContent())
         hideStatusBar()
         window.attributes = window.attributes.apply { screenBrightness = VISIBLE_BRIGHTNESS }
-        setContentView(createContent())
+        handleIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
     }
 
     override fun onResume() {
@@ -118,10 +125,7 @@ class VisibleRecordingActivity : Activity() {
                 ).show()
             }
             setOnLongClickListener {
-                startService(
-                    Intent(this@VisibleRecordingActivity, CaptureService::class.java)
-                        .setAction(CaptureService.ACTION_STOP)
-                )
+                showStopConfirmation()
                 true
             }
         }
@@ -136,6 +140,19 @@ class VisibleRecordingActivity : Activity() {
         content.addView(controlsButton, matchWrap())
 
         return content
+    }
+
+    private fun showStopConfirmation() {
+        if (!CaptureService.isRecording(this)) return
+        StopConfirmation.show(this) {
+            startService(Intent(this, CaptureService::class.java).setAction(CaptureService.ACTION_STOP))
+        }
+    }
+
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action != StopConfirmation.ACTION_REQUEST_STOP) return
+        intent.action = null
+        showStopConfirmation()
     }
 
     private fun render(snapshot: CaptureSnapshot) {
@@ -201,7 +218,10 @@ class VisibleRecordingActivity : Activity() {
     @Suppress("DEPRECATION")
     private fun hideStatusBar() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            window.insetsController?.hide(WindowInsets.Type.statusBars())
+            // Samsung firmware can expose a null controller until the content view
+            // has been attached. The activity must remain usable even if immersive
+            // status-bar hiding is unavailable on a particular device.
+            window.decorView.windowInsetsController?.hide(WindowInsets.Type.statusBars())
         } else {
             window.addFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN)
         }

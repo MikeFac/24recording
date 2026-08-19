@@ -221,10 +221,12 @@ class CaptureService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentMutabilityFlag()
         )
-        val stopIntent = PendingIntent.getService(
+        val stopIntent = PendingIntent.getActivity(
             this,
             2,
-            Intent(this, CaptureService::class.java).setAction(ACTION_STOP),
+            Intent(this, MainActivity::class.java)
+                .setAction(StopConfirmation.ACTION_REQUEST_STOP)
+                .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
             PendingIntent.FLAG_UPDATE_CURRENT or pendingIntentMutabilityFlag()
         )
         return Notification.Builder(this, CHANNEL_ID)
@@ -234,7 +236,7 @@ class CaptureService : Service() {
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setContentIntent(openIntent)
-            .addAction(Notification.Action.Builder(null, "Stop", stopIntent).build())
+            .addAction(Notification.Action.Builder(null, "Stop · enter code", stopIntent).build())
             .build()
     }
 
@@ -316,6 +318,11 @@ class CaptureService : Service() {
             )
             repository.closeQuietly()
             return snapshot
+        }
+
+        fun isRecording(context: Context): Boolean {
+            val current = state(context)
+            return current == CaptureState.RECORDING.name || current == CaptureState.STARTING.name
         }
 
         private fun state(context: Context): String = context
