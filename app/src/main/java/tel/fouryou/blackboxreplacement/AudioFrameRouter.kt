@@ -86,13 +86,17 @@ class AudioFrameRouter(
 
         override fun close() {
             if (!closed.compareAndSet(false, true)) return
-            worker.interrupt()
             worker.join(WORKER_JOIN_TIMEOUT_MS)
+            if (worker.isAlive) {
+                worker.interrupt()
+                worker.join(WORKER_INTERRUPT_JOIN_TIMEOUT_MS)
+            }
             if (consumer is AutoCloseable) consumer.close()
         }
 
         companion object {
             private const val WORKER_JOIN_TIMEOUT_MS = 2_000L
+            private const val WORKER_INTERRUPT_JOIN_TIMEOUT_MS = 500L
         }
     }
 
@@ -104,5 +108,7 @@ class AudioFrameRouter(
 data class AudioFrame(
     val sequence: Long,
     val startedAtElapsedNanos: Long,
+    val startedAtWallClockMs: Long,
+    val durationMs: Long,
     val pcm16Mono16Khz: ByteArray
 )

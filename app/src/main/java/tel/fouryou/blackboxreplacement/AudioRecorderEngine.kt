@@ -153,6 +153,8 @@ class AudioRecorderEngine(
                             AudioFrame(
                                 sequence = frameSequence++,
                                 startedAtElapsedNanos = frame.startedAtElapsedNanos,
+                                startedAtWallClockMs = wallClockFromElapsed(frame.startedAtElapsedNanos),
+                                durationMs = FRAME_SAMPLES * 1_000L / SAMPLE_RATE,
                                 pcm16Mono16Khz = frame.bytes
                             )
                         )

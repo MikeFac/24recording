@@ -29,7 +29,9 @@ enum class LocalTranscriptionModel {
 data class TranscriptEvent(
     val text: String,
     val isFinal: Boolean,
-    val audioSequence: Long
+    val audioSequence: Long,
+    val startedAtWallClockMs: Long,
+    val endedAtWallClockMs: Long
 )
 
 interface TranscriptionProvider : AudioFrameRouter.Consumer, AutoCloseable {
@@ -53,6 +55,8 @@ class SherpaOnnxTranscriptionProvider(
     private val recognizer: OnlineRecognizer
     private val stream: OnlineStream
     private var lastText = ""
+    private var utteranceStartedAtWallClockMs: Long? = null
+    private var utteranceEndedAtWallClockMs: Long? = null
     private var closed = false
 
     init {
@@ -80,6 +84,10 @@ class SherpaOnnxTranscriptionProvider(
 
     override fun consume(frame: AudioFrame) {
         check(!closed) { "Transcription provider is closed" }
+        if (utteranceStartedAtWallClockMs == null) {
+            utteranceStartedAtWallClockMs = frame.startedAtWallClockMs
+        }
+        utteranceEndedAtWallClockMs = frame.startedAtWallClockMs + frame.durationMs
         stream.acceptWaveform(pcm16ToFloat(frame.pcm16Mono16Khz), SAMPLE_RATE)
         decodeAvailable(frame.sequence)
     }
@@ -96,15 +104,25 @@ class SherpaOnnxTranscriptionProvider(
     private fun decodeAvailable(audioSequence: Long) {
         while (recognizer.isReady(stream)) recognizer.decode(stream)
         val result = recognizer.getResult(stream)
-        if (result.text.isNotBlank() && result.text != lastText) {
+        val endpoint = recognizer.isEndpoint(stream)
+        if (result.text.isNotBlank() && result.text != lastText && !endpoint) {
             lastText = result.text
-            onTranscript(TranscriptEvent(result.text, !recognizer.isEndpoint(stream), audioSequence))
+            emitTranscript(result.text, false, audioSequence)
         }
-        if (recognizer.isEndpoint(stream)) {
-            if (lastText.isNotBlank()) onTranscript(TranscriptEvent(lastText, true, audioSequence))
+        if (endpoint) {
+            if (result.text.isNotBlank()) lastText = result.text
+            if (lastText.isNotBlank()) emitTranscript(lastText, true, audioSequence)
             recognizer.reset(stream)
             lastText = ""
+            utteranceStartedAtWallClockMs = null
+            utteranceEndedAtWallClockMs = null
         }
+    }
+
+    private fun emitTranscript(text: String, isFinal: Boolean, audioSequence: Long) {
+        val started = utteranceStartedAtWallClockMs ?: utteranceEndedAtWallClockMs ?: 0L
+        val ended = utteranceEndedAtWallClockMs ?: started
+        onTranscript(TranscriptEvent(text, isFinal, audioSequence, started, ended))
     }
 
     private fun pcm16ToFloat(bytes: ByteArray): FloatArray {
@@ -151,6 +169,8 @@ class MoonshineTranscriptionProvider(
     private val recognizer: OfflineRecognizer
     private val window = ByteArrayOutputStream()
     private var firstSequence = -1L
+    private var windowStartedAtWallClockMs: Long? = null
+    private var windowEndedAtWallClockMs: Long? = null
     private var closed = false
 
     init {
@@ -176,7 +196,11 @@ class MoonshineTranscriptionProvider(
 
     override fun consume(frame: AudioFrame) {
         check(!closed) { "Transcription provider is closed" }
-        if (firstSequence < 0) firstSequence = frame.sequence
+        if (firstSequence < 0) {
+            firstSequence = frame.sequence
+            windowStartedAtWallClockMs = frame.startedAtWallClockMs
+        }
+        windowEndedAtWallClockMs = frame.startedAtWallClockMs + frame.durationMs
         window.write(frame.pcm16Mono16Khz)
         if (window.size() >= WINDOW_BYTES) transcribeWindow()
     }
@@ -197,11 +221,21 @@ class MoonshineTranscriptionProvider(
             recognizer.decode(stream)
             val text = recognizer.getResult(stream).text.trim()
             if (text.isNotEmpty()) {
-                onTranscript(TranscriptEvent(text, isFinal = true, audioSequence = firstSequence))
+                onTranscript(
+                    TranscriptEvent(
+                        text = text,
+                        isFinal = true,
+                        audioSequence = firstSequence,
+                        startedAtWallClockMs = windowStartedAtWallClockMs ?: 0L,
+                        endedAtWallClockMs = windowEndedAtWallClockMs ?: 0L
+                    )
+                )
             }
         } finally {
             stream.release()
             firstSequence = -1L
+            windowStartedAtWallClockMs = null
+            windowEndedAtWallClockMs = null
         }
     }
 

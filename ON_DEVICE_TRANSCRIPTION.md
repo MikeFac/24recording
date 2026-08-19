@@ -30,6 +30,12 @@ Until the model pack is installed, recording continues normally and live
 transcription remains unavailable. A missing or invalid model cannot stop local
 recording.
 
+Each recording session also produces `transcript.jsonl` beside its audio files.
+Every line contains the recognized text, whether it is a final or interim event,
+the audio frame sequence, and epoch-millisecond start/end timestamps. These
+ranges are the input to a later derived-document editor; the original audio is
+not modified or deleted.
+
 ## Model locations
 
 Zipformer files go under `files/models/sherpa-onnx/zipformer-en/`:

@@ -25,6 +25,7 @@ class CaptureService : Service() {
     private lateinit var repository: ChunkRepository
     private var engine: AudioRecorderEngine? = null
     private var frameRouter: AudioFrameRouter? = null
+    private var transcriptStore: TranscriptStore? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var sessionId: String? = null
     private val terminalHandled = AtomicBoolean(false)
@@ -88,6 +89,9 @@ class CaptureService : Service() {
                 sessionId = newSessionId
                 repository.createSession(newSessionId, startedAt)
                 acquireWakeLock()
+                val outputDirectory = File(filesDir, "audio/$newSessionId")
+                val sessionTranscriptStore = TranscriptStore(File(outputDirectory, "transcript.jsonl"))
+                transcriptStore = sessionTranscriptStore
                 val router = AudioFrameRouter(
                     onConsumerFailure = { name, error ->
                         mainHandler.post {
@@ -101,6 +105,7 @@ class CaptureService : Service() {
                         mode = TranscriptionMode.ON_DEVICE_SHERPA_ONNX,
                         model = TranscriptionPreferences.getModel(this),
                         onTranscript = { event ->
+                            sessionTranscriptStore.append(event)
                             if (event.isFinal) updateNotification("Recording · live transcription active")
                         }
                     )
@@ -109,7 +114,6 @@ class CaptureService : Service() {
                 }
                 router.subscribe("transcription", transcriptionProvider)
                 frameRouter = router
-                val outputDirectory = File(filesDir, "audio/$newSessionId")
                 engine = AudioRecorderEngine(
                     outputDirectory = outputDirectory,
                     sessionId = newSessionId,
@@ -164,9 +168,15 @@ class CaptureService : Service() {
     }
 
     private fun stopEngineIfNeeded() {
-        engine?.stop()
+        if (engine != null) {
+            engine?.stop()
+        } else {
+            frameRouter?.close()
+        }
         engine = null
         frameRouter = null
+        transcriptStore?.close()
+        transcriptStore = null
     }
 
     private fun handleEngineFailure(error: Throwable) {
