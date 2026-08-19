@@ -36,7 +36,7 @@ class AudioRecorderEngine(
 
     private data class PcmFrame(
         val bytes: ByteArray,
-        val capturedAt: Long
+        val startedAtElapsedNanos: Long
     )
 
     private val frameQueue = ArrayBlockingQueue<PcmFrame>(FRAME_QUEUE_CAPACITY)
@@ -49,6 +49,8 @@ class AudioRecorderEngine(
     private var encodeThread: Thread? = null
     private var sequence = 0
     private var health = Health()
+    private var timelineAnchorWallClockMs = 0L
+    private var timelineAnchorElapsedNanos = 0L
 
     fun start() {
         check(outputDirectory.exists() || outputDirectory.mkdirs()) {
@@ -81,6 +83,11 @@ class AudioRecorderEngine(
             audioRecord = null
             error("AudioRecord failed to start")
         }
+
+        // Keep one wall-clock anchor for the session, then derive every chunk timestamp
+        // from the monotonic clock. User/NTP wall-clock changes cannot distort chronology.
+        timelineAnchorWallClockMs = System.currentTimeMillis()
+        timelineAnchorElapsedNanos = SystemClock.elapsedRealtimeNanos()
 
         captureThread = Thread(::captureLoop, "audio-capture").apply {
             start()
@@ -115,10 +122,10 @@ class AudioRecorderEngine(
         Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
         val pcm = ByteArray(FRAME_BYTES)
         var filled = 0
-        var frameStartedAt = System.currentTimeMillis()
+        var frameStartedAtElapsedNanos = SystemClock.elapsedRealtimeNanos()
         try {
             while (!stopRequested.get()) {
-                if (filled == 0) frameStartedAt = System.currentTimeMillis()
+                if (filled == 0) frameStartedAtElapsedNanos = SystemClock.elapsedRealtimeNanos()
                 val read = audioRecord?.read(
                     pcm,
                     filled,
@@ -129,7 +136,7 @@ class AudioRecorderEngine(
                     read > 0 -> {
                         filled += read
                         if (filled < pcm.size) continue
-                        val frame = PcmFrame(pcm.copyOf(), frameStartedAt)
+                        val frame = PcmFrame(pcm.copyOf(), frameStartedAtElapsedNanos)
                         if (!frameQueue.offer(frame, QUEUE_OFFER_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
                             health = health.copy(inputOverflows = health.inputOverflows + 1)
                             onHealthChanged(health)
@@ -170,7 +177,7 @@ class AudioRecorderEngine(
                         outputDirectory = outputDirectory,
                         sessionId = sessionId,
                         sequence = sequence++,
-                        startedAt = frame.capturedAt
+                        startedAt = wallClockFromElapsed(frame.startedAtElapsedNanos)
                     )
                     samplesInChunk = 0L
                 }
@@ -201,6 +208,11 @@ class AudioRecorderEngine(
         terminalFailure.compareAndSet(null, error)
         onFailure(error)
     }
+
+    private fun wallClockFromElapsed(elapsedNanos: Long): Long =
+        timelineAnchorWallClockMs + TimeUnit.NANOSECONDS.toMillis(
+            elapsedNanos - timelineAnchorElapsedNanos
+        )
 
     private fun error(message: String): Nothing = throw IllegalStateException(message)
 

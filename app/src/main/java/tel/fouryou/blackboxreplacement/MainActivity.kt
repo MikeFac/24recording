@@ -2,6 +2,7 @@ package tel.fouryou.blackboxreplacement
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -18,6 +19,7 @@ class MainActivity : Activity() {
     private lateinit var stateText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private var startAfterPermissionGrant = false
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
         override fun run() {
@@ -30,7 +32,6 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         CaptureService.reconcileStaleProcessState(this)
         setContentView(createContent())
-        requestRequiredPermissionsIfNeeded()
     }
 
     override fun onResume() {
@@ -81,6 +82,14 @@ class MainActivity : Activity() {
         }
         content.addView(stopButton, matchWrap())
 
+        val guideButton = Button(this).apply {
+            text = "Legal and permission guide"
+            setOnClickListener {
+                startActivity(Intent(this@MainActivity, LegalAndPermissionsActivity::class.java))
+            }
+        }
+        content.addView(guideButton, matchWrap())
+
         val note = TextView(this).apply {
             text = "Recording is deliberately visible. The notification remains active while audio capture is running."
             setPadding(0, 24, 0, 0)
@@ -91,7 +100,16 @@ class MainActivity : Activity() {
     }
 
     private fun startRecording() {
+        if (!LegalNotice.isAcknowledged(this)) {
+            showLegalAcknowledgement()
+            return
+        }
+        startRecordingAfterAcknowledgement()
+    }
+
+    private fun startRecordingAfterAcknowledgement() {
         if (!hasRequiredPermissions()) {
+            startAfterPermissionGrant = true
             requestRequiredPermissionsIfNeeded()
             return
         }
@@ -102,6 +120,21 @@ class MainActivity : Activity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun showLegalAcknowledgement() {
+        AlertDialog.Builder(this)
+            .setTitle("Before recording")
+            .setMessage(LegalNotice.RECORDING_NOTICE)
+            .setPositiveButton("I understand") { _, _ ->
+                LegalNotice.acknowledge(this)
+                startRecordingAfterAcknowledgement()
+            }
+            .setNeutralButton("Read guide") { _, _ ->
+                startActivity(Intent(this, LegalAndPermissionsActivity::class.java))
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun stopRecording() {
@@ -127,6 +160,28 @@ class MainActivity : Activity() {
             }
         }
         if (missing.isNotEmpty()) requestPermissions(missing.toTypedArray(), REQUEST_PERMISSIONS)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != REQUEST_PERMISSIONS || !startAfterPermissionGrant) return
+        startAfterPermissionGrant = false
+        if (hasRequiredPermissions()) {
+            startRecordingAfterAcknowledgement()
+        } else {
+            AlertDialog.Builder(this)
+                .setTitle("Permissions required")
+                .setMessage("Microphone and notification permissions are required by this pilot. Open the setup guide for instructions.")
+                .setPositiveButton("Open guide") { _, _ ->
+                    startActivity(Intent(this, LegalAndPermissionsActivity::class.java))
+                }
+                .setNegativeButton("Cancel", null)
+                .show()
+        }
     }
 
     private fun renderState() {
