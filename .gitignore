@@ -1,0 +1,22 @@
+# Gradle and Android build output
+.gradle/
+**/build/
+local.properties
+
+# IDE files
+.idea/
+*.iml
+
+# Signing credentials and local secrets
+*.jks
+*.keystore
+secrets.properties
+
+# Native build output
+.cxx/
+.externalNativeBuild/
+
+# OS/editor noise
+.DS_Store
+*~
+*.swp
