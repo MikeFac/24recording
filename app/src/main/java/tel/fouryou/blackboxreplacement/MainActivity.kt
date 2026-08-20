@@ -10,12 +10,14 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.text.InputType
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.ArrayAdapter
+import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var stateText: TextView
@@ -35,6 +37,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         CaptureService.reconcileStaleProcessState(this)
         setContentView(createContent())
+        UploadCoordinator.start(this)
         handleIntent(intent)
     }
 
@@ -107,6 +110,12 @@ class MainActivity : Activity() {
             }
         }
         content.addView(guideButton, matchWrap())
+
+        val uploadSettingsButton = Button(this).apply {
+            text = "Configure server upload"
+            setOnClickListener { showUploadSettings() }
+        }
+        content.addView(uploadSettingsButton, matchWrap())
 
         val transcriptionLabel = TextView(this).apply {
             text = "On-device live transcription"
@@ -262,6 +271,46 @@ class MainActivity : Activity() {
         val active = snapshot.state == CaptureState.RECORDING.name || snapshot.state == CaptureState.STARTING.name
         startButton.isEnabled = !active
         stopButton.isEnabled = active
+    }
+
+    private fun showUploadSettings() {
+        val current = UploadPreferences.get(this)
+        val fields = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            val padding = (resources.displayMetrics.density * 24).toInt()
+            setPadding(padding, 8, padding, 0)
+        }
+        val url = android.widget.EditText(this).apply {
+            hint = "https://e-agent.4you.uno"
+            setText(current.serverUrl)
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+        }
+        val key = android.widget.EditText(this).apply {
+            hint = "Pilot API key"
+            setText(current.apiKey)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        fields.addView(TextView(this).apply { text = "Server URL" })
+        fields.addView(url)
+        fields.addView(TextView(this).apply { text = "API key" })
+        fields.addView(key)
+        AlertDialog.Builder(this)
+            .setTitle("Server processing")
+            .setMessage("Original M4A chunks upload over HTTPS. Cleanup and transcription happen on the server.")
+            .setView(fields)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val serverUrl = url.text.toString().trimEnd('/')
+                val apiKey = key.text.toString().trim()
+                if (!serverUrl.startsWith("https://") || apiKey.isBlank()) {
+                    Toast.makeText(this, "Use an HTTPS URL and a non-empty API key", Toast.LENGTH_LONG).show()
+                } else {
+                    UploadPreferences.save(this, serverUrl, apiKey)
+                    UploadCoordinator.start(this)
+                    Toast.makeText(this, "Upload configured", Toast.LENGTH_SHORT).show()
+                }
+            }
+            .show()
     }
 
     private fun matchWrap() = LinearLayout.LayoutParams(

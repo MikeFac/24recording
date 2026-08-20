@@ -133,6 +133,57 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
         }
     }
 
+    @Synchronized
+    fun resetUploadingChunks(): Int = writableDatabase.update(
+        "chunks",
+        ContentValues().apply { put("state", "READY") },
+        "state = ?",
+        arrayOf("UPLOADING")
+    )
+
+    @Synchronized
+    fun readyChunks(limit: Int = 2): List<CompletedChunk> {
+        val chunks = mutableListOf<CompletedChunk>()
+        readableDatabase.query(
+            "chunks", null, "state = ?", arrayOf("READY"), null, null,
+            "started_at ASC", limit.coerceIn(1, 20).toString()
+        ).use { cursor ->
+            while (cursor.moveToNext()) chunks += readChunk(cursor)
+        }
+        return chunks
+    }
+
+    @Synchronized
+    fun markUploading(id: String): Boolean {
+        val values = ContentValues().apply { put("state", "UPLOADING") }
+        return writableDatabase.update("chunks", values, "id = ? AND state = ?", arrayOf(id, "READY")) == 1
+    }
+
+    @Synchronized
+    fun markUploaded(id: String) {
+        val values = ContentValues().apply { put("state", "UPLOADED") }
+        writableDatabase.update("chunks", values, "id = ?", arrayOf(id))
+    }
+
+    @Synchronized
+    fun markUploadReady(id: String) {
+        val values = ContentValues().apply { put("state", "READY") }
+        writableDatabase.update("chunks", values, "id = ?", arrayOf(id))
+    }
+
+    private fun readChunk(cursor: android.database.Cursor): CompletedChunk = CompletedChunk(
+        id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
+        sessionId = cursor.getString(cursor.getColumnIndexOrThrow("session_id")),
+        sequence = cursor.getInt(cursor.getColumnIndexOrThrow("sequence_no")),
+        startedAt = cursor.getLong(cursor.getColumnIndexOrThrow("started_at")),
+        endedAt = cursor.getLong(cursor.getColumnIndexOrThrow("ended_at")),
+        durationMs = cursor.getLong(cursor.getColumnIndexOrThrow("duration_ms")),
+        path = cursor.getString(cursor.getColumnIndexOrThrow("path")),
+        byteLength = cursor.getLong(cursor.getColumnIndexOrThrow("byte_length")),
+        sha256 = cursor.getString(cursor.getColumnIndexOrThrow("sha256")),
+        state = cursor.getString(cursor.getColumnIndexOrThrow("state")),
+    )
+
     fun closeQuietly() = close()
 
     companion object {

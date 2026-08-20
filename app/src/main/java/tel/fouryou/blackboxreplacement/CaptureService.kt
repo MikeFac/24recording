@@ -36,10 +36,12 @@ class CaptureService : Service() {
         reconcileStaleProcessState(this)
         serviceAlive.set(true)
         repository = ChunkRepository(this)
+        UploadCoordinator.start(this)
         createNotificationChannel()
         controlExecutor.execute {
             try {
                 RecordingRecovery.reconcile(File(filesDir, "audio"), repository)
+                UploadCoordinator.trigger(this)
             } catch (t: Throwable) {
                 startupFailure = t
             }
@@ -120,6 +122,7 @@ class CaptureService : Service() {
                     repository = repository,
                     onChunkCompleted = { chunk ->
                         updateNotification("Saved chunk ${chunk.sequence + 1}")
+                        UploadCoordinator.trigger(this)
                     },
                     onHealthChanged = { health ->
                         saveHealth(health)
