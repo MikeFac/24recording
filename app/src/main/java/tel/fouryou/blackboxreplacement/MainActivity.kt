@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -15,6 +16,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Spinner
+import android.widget.Switch
 import android.widget.TextView
 import android.widget.ArrayAdapter
 import android.widget.Toast
@@ -24,6 +26,8 @@ class MainActivity : Activity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var transcriptionModelSpinner: Spinner
+    private lateinit var liveTranscriptionSwitch: Switch
+    private lateinit var uploadStatusText: TextView
     private var startAfterPermissionGrant = false
     private val handler = Handler(Looper.getMainLooper())
     private val refresh = object : Runnable {
@@ -37,7 +41,7 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         CaptureService.reconcileStaleProcessState(this)
         setContentView(createContent())
-        UploadCoordinator.start(this)
+        UploadCoordinator.startIfEnabled(this)
         handleIntent(intent)
     }
 
@@ -117,15 +121,61 @@ class MainActivity : Activity() {
         }
         content.addView(uploadSettingsButton, matchWrap())
 
+        val syncButton = Button(this).apply {
+            text = "Sync now"
+            setOnClickListener {
+                UploadCoordinator.trigger(this@MainActivity)
+                Toast.makeText(this@MainActivity, "Sync queued", Toast.LENGTH_SHORT).show()
+            }
+        }
+        content.addView(syncButton, matchWrap())
+
+        uploadStatusText = TextView(this).apply { setPadding(0, 8, 0, 8) }
+        content.addView(uploadStatusText, matchWrap())
+
+        val retentionButton = Button(this).apply {
+            text = "Manage local recordings"
+            setOnClickListener { showRetentionDialog() }
+        }
+        content.addView(retentionButton, matchWrap())
+
+        val importButton = Button(this).apply {
+            text = "Import external recording"
+            setOnClickListener {
+                startActivityForResult(
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "audio/*"
+                    },
+                    REQUEST_IMPORT_AUDIO
+                )
+            }
+        }
+        content.addView(importButton, matchWrap())
+
         val transcriptionLabel = TextView(this).apply {
-            text = "On-device live transcription"
+            text = "Live transcription"
             setPadding(0, 24, 0, 4)
         }
         content.addView(transcriptionLabel, matchWrap())
 
+        liveTranscriptionSwitch = Switch(this).apply {
+            text = "Enable live transcription + automatic upload"
+            isChecked = TranscriptionPreferences.isLiveEnabled(this@MainActivity)
+            setOnCheckedChangeListener { _, enabled ->
+                TranscriptionPreferences.setLiveEnabled(this@MainActivity, enabled)
+                transcriptionModelSpinner.isEnabled = enabled
+                if (enabled) {
+                    UploadCoordinator.triggerIfEnabled(this@MainActivity)
+                } else {
+                    UploadCoordinator.cancel(this@MainActivity)
+                }
+            }
+        }
+        content.addView(liveTranscriptionSwitch, matchWrap())
+
         transcriptionModelSpinner = Spinner(this).apply {
             val models = listOf(
-                LocalTranscriptionModel.OFF,
                 LocalTranscriptionModel.MOONSHINE_TINY,
                 LocalTranscriptionModel.ZIPFORMER_STREAMING
             )
@@ -134,7 +184,7 @@ class MainActivity : Activity() {
                 android.R.layout.simple_spinner_item,
                 models.map { transcriptionLabel(it) }
             ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            setSelection(models.indexOf(TranscriptionPreferences.getModel(this@MainActivity)))
+            setSelection(models.indexOf(TranscriptionPreferences.getModel(this@MainActivity)).coerceAtLeast(0))
             setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
                 override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
                 override fun onItemSelected(
@@ -147,6 +197,7 @@ class MainActivity : Activity() {
                 }
             })
         }
+        transcriptionModelSpinner.isEnabled = liveTranscriptionSwitch.isChecked
         content.addView(transcriptionModelSpinner, matchWrap())
 
         val note = TextView(this).apply {
@@ -172,14 +223,6 @@ class MainActivity : Activity() {
             requestRequiredPermissionsIfNeeded()
             return
         }
-        TranscriptionPreferences.setModel(
-            this,
-            listOf(
-                LocalTranscriptionModel.OFF,
-                LocalTranscriptionModel.MOONSHINE_TINY,
-                LocalTranscriptionModel.ZIPFORMER_STREAMING
-            )[transcriptionModelSpinner.selectedItemPosition]
-        )
         val intent = Intent(this, CaptureService::class.java)
             .setAction(CaptureService.ACTION_START)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -265,12 +308,90 @@ class MainActivity : Activity() {
         }
     }
 
+    @Deprecated("Use Activity Result APIs when this pilot moves to AndroidX Activity")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_IMPORT_AUDIO || resultCode != RESULT_OK) return
+        val uri: Uri = data?.data ?: return
+        try {
+            val result = ExternalAudioImporter(this).import(uri)
+            UploadCoordinator.triggerIfEnabled(this)
+            Toast.makeText(
+                this,
+                "Imported ${result.displayName ?: "recording"}; queued for sync",
+                Toast.LENGTH_LONG
+            ).show()
+        } catch (error: Throwable) {
+            Toast.makeText(this, "Import failed: ${error.message}", Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun renderState() {
         val snapshot = CaptureService.snapshot(this)
         stateText.text = snapshot.asDisplayText()
         val active = snapshot.state == CaptureState.RECORDING.name || snapshot.state == CaptureState.STARTING.name
         startButton.isEnabled = !active
         stopButton.isEnabled = active
+        val repository = ChunkRepository(this)
+        try {
+            val ready = repository.countChunks("READY")
+            val uploaded = repository.countChunks("UPLOADED")
+            val deleted = repository.countChunks("LOCAL_DELETED") + repository.countChunks("LOCAL_DELETED_UNUPLOADED")
+            val status = UploadStatusStore.get(this)
+            uploadStatusText.text = "Sync: ${status.state}\nQueued: $ready · Uploaded: $uploaded · Local deleted: $deleted" +
+                if (status.error.isBlank()) "" else "\nError: ${status.error}"
+        } finally {
+            repository.closeQuietly()
+        }
+    }
+
+    private fun showRetentionDialog() {
+        val repository = ChunkRepository(this)
+        val safe = try {
+            repository.deletionPreview(true, System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000)
+        } finally { repository.closeQuietly() }
+        AlertDialog.Builder(this)
+            .setTitle("Local recordings")
+            .setMessage("Uploaded older than 7 days: ${safe.count} files (${formatBytes(safe.bytes)}).\n\nUnuploaded files are never removed by the safe option.")
+            .setNegativeButton("Close", null)
+            .setNeutralButton("Delete uploaded") { _, _ -> confirmDeletion(true, safe) }
+            .setPositiveButton("Delete all local") { _, _ ->
+                val repo = ChunkRepository(this)
+                val preview = try { repo.deletionPreview(false) } finally { repo.closeQuietly() }
+                confirmDeletion(false, preview)
+            }
+            .show()
+    }
+
+    private fun confirmDeletion(onlyUploaded: Boolean, preview: LocalDeletionPreview) {
+        val warning = if (onlyUploaded) {
+            "Delete ${preview.count} uploaded local files (${formatBytes(preview.bytes)})? Server copies will remain."
+        } else {
+            "DANGER: delete ${preview.count} local files (${formatBytes(preview.bytes)}), including recordings not uploaded to the server? This may permanently lose recordings."
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (onlyUploaded) "Confirm deletion" else "Confirm permanent data loss")
+            .setMessage(warning)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton(if (onlyUploaded) "Delete" else "Delete permanently") { _, _ ->
+                val repo = ChunkRepository(this)
+                try {
+                    val deleted = repo.deleteLocalChunks(
+                        onlyUploaded,
+                        if (onlyUploaded) System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000 else null
+                    )
+                    Toast.makeText(this, "Deleted ${deleted.count} local files", Toast.LENGTH_LONG).show()
+                } catch (error: Throwable) {
+                    Toast.makeText(this, "Deletion failed: ${error.message}", Toast.LENGTH_LONG).show()
+                } finally { repo.closeQuietly() }
+            }
+            .show()
+    }
+
+    private fun formatBytes(bytes: Long): String = when {
+        bytes >= 1024L * 1024 * 1024 -> "%.1f GB".format(bytes / (1024.0 * 1024 * 1024))
+        bytes >= 1024L * 1024 -> "%.1f MB".format(bytes / (1024.0 * 1024))
+        else -> "$bytes bytes"
     }
 
     private fun showUploadSettings() {
@@ -306,7 +427,7 @@ class MainActivity : Activity() {
                     Toast.makeText(this, "Use an HTTPS URL and a non-empty API key", Toast.LENGTH_LONG).show()
                 } else {
                     UploadPreferences.save(this, serverUrl, apiKey)
-                    UploadCoordinator.start(this)
+                    UploadCoordinator.startIfEnabled(this)
                     Toast.makeText(this, "Upload configured", Toast.LENGTH_SHORT).show()
                 }
             }
@@ -326,5 +447,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REQUEST_PERMISSIONS = 100
+        private const val REQUEST_IMPORT_AUDIO = 101
     }
 }

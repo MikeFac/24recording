@@ -8,7 +8,7 @@
 
 ## 1. Product definition
 
-The product is an always-available personal memory capture system. A user deliberately starts a recording session, wears a microphone, and carries a dedicated Android phone. The phone continuously captures microphone audio while the screen is locked, saves complete audio files at fixed intervals, and uploads them whenever connectivity is available. The processing service preserves the original recording, creates a cleaned speech derivative, runs Whisper transcription, and stores time-aligned transcript segments for search and later memory extraction.
+The product is an always-available personal memory capture system. A user deliberately starts a recording session, wears a microphone, and carries a dedicated Android phone. The phone continuously captures microphone audio while the screen is locked, saves complete audio files at fixed intervals, and uploads them whenever connectivity is available. The processing service preserves the original recording, creates a cleaned speech derivative, performs voice activity detection, and stores time-aligned transcript segments for search and later memory extraction.
 
 The Android application is a capture and delivery client. It is not responsible for summarisation, semantic search, or other AI memory features in the MVP.
 
@@ -20,7 +20,7 @@ The Android application is a capture and delivery client. It is not responsible 
 - Recover cleanly from temporary connectivity loss, process death, and device reboot where Android permits automatic restart.
 - Upload each completed file exactly once from the user's perspective, with resumable retries and integrity verification.
 - Preserve original audio and never replace it with a denoised or transcoded copy.
-- Clean audio conservatively, identify speech regions, and transcribe speech with Whisper.
+- Clean audio conservatively, identify speech regions, and transcribe speech through an explicitly enabled cloud service.
 - Make recording state visible and require deliberate user initiation.
 - Keep the ingestion contract independent of Android so a future pendant can use the same backend.
 
@@ -28,7 +28,7 @@ The Android application is a capture and delivery client. It is not responsible 
 
 - Covert recording or hiding the Android foreground-service notification.
 - Voice activation as the capture mechanism.
-- Real-time transcription.
+- Local speech-to-text as the default or guaranteed processing path.
 - Speaker recognition or biometric identification.
 - Automatic legal determination of whether a conversation may be recorded.
 - A custom pendant.
@@ -162,14 +162,81 @@ The app must alert locally when the microphone is disconnected, input becomes si
 
 ### FR-8 Whisper transcription
 
-1. Each speech window is transcribed by Whisper or a compatible Whisper implementation.
-2. The initial server implementation should use `faster-whisper` with a configurable model, beginning with `small` or `medium` depending on measured accuracy/cost.
-3. Language is auto-detected, with an account/session override.
-4. Output includes segment start/end times, text, model/version, language, average log probability where available, and no-speech probability where available.
-5. Adjacent windows are merged without losing timestamps. Context from neighboring windows may be supplied to reduce boundary errors, but duplicated text must be removed deterministically.
-6. Low-confidence segments are flagged for review; they are not silently discarded.
-7. Transcription is asynchronous and retried safely. A failed chunk does not block later chunks.
-8. The transcript is linked to the original chunk and cleaned derivative so the user can play back the source interval.
+1. Local Android speech-to-text is an optional mode, not the default or a guaranteed processing path. Local Whisper `tiny` was not sufficiently reliable for trouser-pocket recordings, and larger models may not process continuously on the target phone in a timely way. A high-quality microphone/input setup may make local transcription viable, so the option remains available behind device and quality checks.
+2. Live transcription is an explicit user-controlled feature, separate from recording. When enabled, the user chooses cloud or local mode. Cloud mode sends speech audio to a selected streaming provider and receives partial and final timestamped events. Local mode keeps audio and transcript processing on the device. When live transcription is disabled, recording continues locally and no live transcription audio is sent.
+3. A lightweight local voice activity detector may gate the cloud stream; this is not local transcription. After a configurable period without speech (default: 60 seconds), the client closes the cloud session while continuing to record. It must actually close the session because streaming providers may bill session duration even when no audio is flowing.
+4. The first live provider spike should use AssemblyAI Universal Streaming over WebSocket. The provider adapter must remain replaceable so Deepgram, Google Cloud Speech-to-Text, or another consented provider can be evaluated without changing capture or transcript entities.
+5. For completed recordings, the server may use a cloud pre-recorded transcription API or a server-hosted Whisper model. The batch path may strip non-speaking regions first, but it must retain original timestamps and preserve the source audio.
+6. The Android built-in `SpeechRecognizer` and on-device Whisper/sherpa-onnx providers are optional implementation candidates. They require a bounded feasibility test for continuous capture, latency, battery, memory, background behavior, privacy, and accuracy on certified devices. They must not silently replace cloud transcription when they fall behind or fail.
+7. Language is auto-detected, with an account/session override.
+8. Output includes segment start/end times, text, provider/model/version, language, confidence where available, and the original audio time range.
+9. Adjacent windows are merged without losing timestamps. Context from neighboring windows may be supplied to reduce boundary errors, but duplicated text must be removed deterministically.
+10. Low-confidence segments and provider failures are flagged for review; they are not silently discarded. Recording and local persistence continue if the network or provider fails.
+11. Transcription is asynchronous and retried safely. A failed chunk does not block later chunks.
+12. The transcript is linked to the original chunk and cleaned derivative so the user can play back the source interval.
+
+### FR-8a Live transcription control and cost/privacy protection
+
+1. The UI has an explicit **Live transcription** toggle and a mode selector: `Cloud`, `On device`, or `Off`.
+2. Cloud mode clearly indicates that audio is being sent to a third party. On-device mode clearly indicates that audio is not being uploaded for transcription.
+3. Turning live transcription off closes the provider session or local recognizer but does not stop recording.
+4. A one-minute no-speech timeout closes a cloud provider session; subsequent speech starts a new session with a short local pre-roll. On-device mode may pause decoding during silence without closing the capture service.
+5. The app reports live-transcription state separately from recording state: `OFF`, `CONNECTING`, `LIVE`, `PAUSED_NO_SPEECH`, `OFFLINE`, `UNAVAILABLE`, and `ERROR`.
+6. The app maintains the full local recording as the source of truth. Live transcript events are best-effort conveniences and may be repaired later through batch processing.
+7. Provider usage, session duration, failures, device load, battery impact, and estimated cloud cost are recorded for account controls and quality evaluation.
+
+### FR-8b Speaker authority and memory safety
+
+Speaker diarisation answers “who appears to be speaking?”; it does not answer
+“who is authorised to instruct the agent?” The server must keep those
+decisions separate.
+
+1. Each transcript segment stores speaker label, speaker-identity class
+   (`user`, `known_person`, or `unknown`), identity confidence, and the
+   diarisation/provider version. A label is evidence, not authentication.
+2. Each segment is also classified for semantic role, such as conversation,
+   user statement, question, or explicit agent instruction. The classification
+   records its model/version and confidence.
+3. An unknown or non-user speaker must never directly create an agent
+   instruction, change a setting, or promote a memory. Their speech may be
+   retained as contextual transcript evidence and may create a review-required
+   candidate.
+4. A multi-speaker recording is never treated as wholly user-authorised. The
+   authority decision is made per segment, with conservative handling for
+   overlap, uncertain diarisation, and unattributed speech.
+5. The MVP should provide an explicit instruction marker: a dedicated command
+   mode, push-to-talk/instruction action, or a clear activation phrase such as
+   “Assistant, remember…”. The Live transcription toggle controls capture and
+   upload behaviour only; it does not make every spoken sentence an instruction.
+6. No raw audio or transcript may directly mutate long-term memory. The server
+   creates evidence-backed candidate claims with source interval, speaker
+   metadata, transcript excerpt, extraction model/version, and reason for
+   eligibility. Promotion requires the existing review or explicit user
+   confirmation flow.
+7. Voice-profile matching may improve identity confidence later, but it is a
+   supporting signal rather than the sole authority mechanism because pocket
+   recordings, noise, overlap, and false matches are expected.
+8. After transcription, the server sends normalized transcript text (not raw
+   audio) to a structured classifier LLM. The classifier first divides the
+   recording into coherent sections with source-relative start/end timestamps.
+   Sections must not overlap, omit transcript text, or lose the link to the
+   original audio interval except where an explicit uncertain boundary is
+   recorded.
+9. Each section receives a concise summary and one or more content labels:
+   `INSTRUCTIONS`, `OBSERVATIONS`, and `DIALOGUE`, with confidence, rationale,
+   model/provider/version, and prompt/schema versions. Sections can also carry
+   topic, sensitivity, and participant metadata.
+10. The recording-level result is an aggregate summary and label distribution.
+    Routing, authority checks, candidate extraction, and memory handling use
+    the section-level results rather than the aggregate.
+11. Section classification is routing metadata, not authority. An
+    `INSTRUCTIONS` section receives stricter review and explicit-authority
+    checks; it does not authorise any command. A mixed recording must remain
+    section-aware.
+12. Classifier failures, low confidence, or disagreement with speaker/role
+    classification must fail safe: retain the transcript and continue normal
+    candidate processing, but do not enable instruction execution or automatic
+    memory promotion.
 
 ### FR-9 Data export and deletion
 
@@ -220,7 +287,21 @@ PCM ring buffer -> AAC MediaCodec -> M4A MediaMuxer
                  Object storage + metadata database
                              |
                              v
-        decode -> cleanup -> VAD -> Whisper -> transcript index
+        decode -> cleanup -> VAD -> STT + diarisation
+                                      |
+                                      v
+                         segment role + authority gate
+                                      |
+                                      v
+                         transcript -> section boundary classifier
+                                      |
+                                      v
+                         per-section summary/content classifier
+                                      |
+                                      v
+                         transcript/source events -> memory candidates
+                             |
+                             +--> optional cloud live STT WebSocket
                              |
                              v
                   memory extraction/search API
@@ -298,8 +379,25 @@ channels, processing_version, created_at
 ```text
 id, chunk_id, derivative_id, start_ms, end_ms, text,
 language, confidence_json, model_name, model_version,
-created_at
+speaker_label, speaker_class, speaker_confidence,
+segment_role, role_confidence, authority_state,
+classification_model, classification_version,
+transcript_summary, content_labels_json, content_confidence_json,
+content_model, content_model_version, created_at
 ```
+
+### TranscriptSection
+
+```text
+id, chunk_id, start_ms, end_ms, transcript_segment_ids,
+summary, content_labels_json, confidence_json,
+boundary_confidence, topic_json, sensitivity,
+model_name, model_version, prompt_version, schema_version, created_at
+```
+
+Every section retains exact source offsets and the transcript segment IDs used
+to create it. If a section boundary is uncertain, the section is flagged for
+review and must not be used to authorize an instruction.
 
 All timestamps are relative to the chunk plus the chunk's UTC start time. Never use client wall-clock time alone to calculate duration; use the audio/sample clock and retain wall-clock timestamps as metadata.
 

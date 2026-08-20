@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import java.io.File
 
 data class CompletedChunk(
     val id: String,
@@ -15,8 +16,11 @@ data class CompletedChunk(
     val path: String,
     val byteLength: Long,
     val sha256: String,
-    val state: String
+    val state: String,
+    val mediaType: String = "audio/mp4"
 )
+
+data class LocalDeletionPreview(val count: Int, val bytes: Long)
 
 class ChunkRepository(context: Context) : SQLiteOpenHelper(
     context.applicationContext,
@@ -48,6 +52,7 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
                 byte_length INTEGER NOT NULL,
                 sha256 TEXT NOT NULL,
                 state TEXT NOT NULL,
+                media_type TEXT NOT NULL DEFAULT 'audio/mp4',
                 created_at INTEGER NOT NULL,
                 UNIQUE(session_id, sequence_no)
             )
@@ -57,7 +62,9 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // No schema migration exists yet. Version 1 is the capture MVP baseline.
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE chunks ADD COLUMN media_type TEXT NOT NULL DEFAULT 'audio/mp4'")
+        }
     }
 
     fun createSession(id: String, startedAt: Long) {
@@ -108,6 +115,7 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
             put("byte_length", chunk.byteLength)
             put("sha256", chunk.sha256)
             put("state", chunk.state)
+            put("media_type", chunk.mediaType)
             put("created_at", System.currentTimeMillis())
         }
         return writableDatabase.insertWithOnConflict("chunks", null, values, conflictAlgorithm)
@@ -171,6 +179,58 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
         writableDatabase.update("chunks", values, "id = ?", arrayOf(id))
     }
 
+    @Synchronized
+    fun deletionPreview(onlyUploaded: Boolean, olderThanMs: Long? = null): LocalDeletionPreview {
+        val clauses = mutableListOf<String>()
+        val args = mutableListOf<String>()
+        // Never remove the currently active capture or a chunk whose upload is in flight.
+        clauses += "state NOT IN ('LOCAL_DELETED', 'LOCAL_DELETED_UNUPLOADED', 'CAPTURING', 'UPLOADING')"
+        if (onlyUploaded) clauses += "state = 'UPLOADED'"
+        olderThanMs?.let {
+            clauses += "started_at < ?"
+            args += it.toString()
+        }
+        val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
+        readableDatabase.query(
+            "chunks", arrayOf("COUNT(*)", "COALESCE(SUM(byte_length), 0)"),
+            selection, args.toTypedArray(), null, null, null
+        ).use { cursor ->
+            check(cursor.moveToFirst()) { "Could not calculate deletion preview" }
+            return LocalDeletionPreview(cursor.getInt(0), cursor.getLong(1))
+        }
+    }
+
+    @Synchronized
+    fun deleteLocalChunks(onlyUploaded: Boolean, olderThanMs: Long? = null): LocalDeletionPreview {
+        val clauses = mutableListOf<String>()
+        val args = mutableListOf<String>()
+        // Never remove the currently active capture or a chunk whose upload is in flight.
+        clauses += "state NOT IN ('LOCAL_DELETED', 'LOCAL_DELETED_UNUPLOADED', 'CAPTURING', 'UPLOADING')"
+        if (onlyUploaded) clauses += "state = 'UPLOADED'"
+        olderThanMs?.let {
+            clauses += "started_at < ?"
+            args += it.toString()
+        }
+        val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
+        val rows = mutableListOf<Pair<String, String>>()
+        readableDatabase.query("chunks", arrayOf("id", "path"), selection, args.toTypedArray(), null, null, null)
+            .use { cursor -> while (cursor.moveToNext()) rows += cursor.getString(0) to cursor.getString(1) }
+        var deleted = 0
+        var bytes = 0L
+        for ((id, path) in rows) {
+            val file = File(path)
+            val length = file.length()
+            check(!file.exists() || file.delete()) { "Could not delete local recording $id" }
+            val state = if (onlyUploaded) "LOCAL_DELETED" else "LOCAL_DELETED_UNUPLOADED"
+            writableDatabase.update(
+                "chunks", ContentValues().apply { put("state", state) }, "id = ?", arrayOf(id)
+            )
+            deleted++
+            bytes += length
+        }
+        return LocalDeletionPreview(deleted, bytes)
+    }
+
     private fun readChunk(cursor: android.database.Cursor): CompletedChunk = CompletedChunk(
         id = cursor.getString(cursor.getColumnIndexOrThrow("id")),
         sessionId = cursor.getString(cursor.getColumnIndexOrThrow("session_id")),
@@ -182,12 +242,13 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
         byteLength = cursor.getLong(cursor.getColumnIndexOrThrow("byte_length")),
         sha256 = cursor.getString(cursor.getColumnIndexOrThrow("sha256")),
         state = cursor.getString(cursor.getColumnIndexOrThrow("state")),
+        mediaType = cursor.getString(cursor.getColumnIndexOrThrow("media_type")),
     )
 
     fun closeQuietly() = close()
 
     companion object {
         private const val DATABASE_NAME = "capture.db"
-        private const val DATABASE_VERSION = 1
+        private const val DATABASE_VERSION = 2
     }
 }

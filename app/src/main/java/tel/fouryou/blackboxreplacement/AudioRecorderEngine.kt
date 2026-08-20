@@ -1,14 +1,12 @@
 package tel.fouryou.blackboxreplacement
 
 import android.annotation.SuppressLint
-import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaMuxer
-import android.media.MediaRecorder
 import android.os.Process
 import android.os.SystemClock
 import java.io.File
@@ -29,7 +27,8 @@ class AudioRecorderEngine(
     private val onChunkCompleted: (CompletedChunk) -> Unit,
     private val onHealthChanged: (Health) -> Unit,
     private val onFailure: (Throwable) -> Unit,
-    private val frameRouter: AudioFrameRouter = AudioFrameRouter()
+    private val frameRouter: AudioFrameRouter = AudioFrameRouter(),
+    private val audioInput: AudioInputSource = AndroidPhoneMicrophoneSource()
 ) {
     data class Health(
         val inputUnderruns: Long = 0,
@@ -46,7 +45,6 @@ class AudioRecorderEngine(
     private val captureFinished = AtomicBoolean(false)
     private val stopped = AtomicBoolean(false)
     private val terminalFailure = AtomicReference<Throwable?>(null)
-    private var audioRecord: AudioRecord? = null
     private var captureThread: Thread? = null
     private var encodeThread: Thread? = null
     private var sequence = 0
@@ -61,33 +59,11 @@ class AudioRecorderEngine(
         check(outputDirectory.exists() || outputDirectory.mkdirs()) {
             "Could not create audio output directory"
         }
-        val minBuffer = AudioRecord.getMinBufferSize(
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT
-        )
-        require(minBuffer > 0) { "AudioRecord does not support the requested format" }
-
-        val bufferBytes = max(minBuffer * 2, FRAME_BYTES * 4)
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
-            SAMPLE_RATE,
-            AudioFormat.CHANNEL_IN_MONO,
-            AudioFormat.ENCODING_PCM_16BIT,
-            bufferBytes
-        )
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-            recorder.release()
-            error("AudioRecord failed to initialize")
+        check(audioInput.descriptor.sampleRate == SAMPLE_RATE) {
+            "Audio input must provide ${SAMPLE_RATE}Hz PCM for the current encoder"
         }
-        audioRecord = recorder
-
-        recorder.startRecording()
-        if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-            recorder.release()
-            audioRecord = null
-            error("AudioRecord failed to start")
-        }
+        check(audioInput.descriptor.channels == 1) { "Audio input must be mono" }
+        audioInput.start()
 
         // Keep one wall-clock anchor for the session, then derive every chunk timestamp
         // from the monotonic clock. User/NTP wall-clock changes cannot distort chronology.
@@ -105,21 +81,19 @@ class AudioRecorderEngine(
     fun stop() {
         if (!stopped.compareAndSet(false, true)) return
         if (stopRequested.compareAndSet(false, true)) {
-            runCatching { audioRecord?.stop() }
+            runCatching { audioInput.stop() }
             captureThread?.interrupt()
         }
         captureThread?.join(STOP_JOIN_TIMEOUT_MS)
         if (captureThread?.isAlive == true) {
-            runCatching { audioRecord?.release() }
-            audioRecord = null
+            runCatching { audioInput.close() }
             captureThread?.join(FORCED_STOP_JOIN_TIMEOUT_MS)
         }
         check(captureThread?.isAlive != true) { "Audio capture thread did not stop" }
 
         encodeThread?.join(ENCODER_STOP_JOIN_TIMEOUT_MS)
         check(encodeThread?.isAlive != true) { "Audio encoder thread did not finalize" }
-        audioRecord?.release()
-        audioRecord = null
+        audioInput.close()
         frameRouter.close()
         terminalFailure.get()?.let { throw IllegalStateException("Audio recording failed", it) }
     }
@@ -133,12 +107,11 @@ class AudioRecorderEngine(
         try {
             while (!stopRequested.get()) {
                 if (filled == 0) frameStartedAtElapsedNanos = SystemClock.elapsedRealtimeNanos()
-                val read = audioRecord?.read(
+                val read = audioInput.read(
                     pcm,
                     filled,
-                    pcm.size - filled,
-                    AudioRecord.READ_BLOCKING
-                ) ?: AudioRecord.ERROR_INVALID_OPERATION
+                    pcm.size - filled
+                )
                 when {
                     read > 0 -> {
                         filled += read
@@ -411,7 +384,7 @@ class AudioRecorderEngine(
         private const val SAMPLE_RATE = 16_000
         private const val BYTES_PER_SAMPLE = 2
         private const val FRAME_SAMPLES = SAMPLE_RATE / 50 // 20 ms
-        private const val FRAME_BYTES = FRAME_SAMPLES * BYTES_PER_SAMPLE
+        internal const val FRAME_BYTES = FRAME_SAMPLES * BYTES_PER_SAMPLE
         private const val CHUNK_SECONDS = 15 * 60
         private const val CHUNK_SAMPLES = SAMPLE_RATE.toLong() * CHUNK_SECONDS
         private const val AAC_BITRATE = 48_000

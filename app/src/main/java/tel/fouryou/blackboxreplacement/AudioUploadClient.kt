@@ -9,6 +9,10 @@ import java.net.URL
 import java.time.Instant
 import java.time.format.DateTimeFormatter
 
+class UploadException(val status: Int, val safeMessage: String) : RuntimeException(safeMessage) {
+    val retryable: Boolean = status == 408 || status == 429 || status >= 500
+}
+
 class AudioUploadClient(context: Context) {
     private val settings = UploadPreferences.get(context)
 
@@ -25,7 +29,7 @@ class AudioUploadClient(context: Context) {
             .put("duration_ms", chunk.durationMs)
             .put("byte_length", chunk.byteLength)
             .put("sha256", chunk.sha256)
-            .put("media_type", "audio/mp4")
+            .put("media_type", chunk.mediaType)
             .put("device_id", settings.deviceId)
         requestJson("POST", "/v1/audio-chunks", metadata)
         putFile(chunk, file)
@@ -36,7 +40,7 @@ class AudioUploadClient(context: Context) {
         val connection = open("PUT", "/v1/audio-chunks/${chunk.id}/content")
         connection.doOutput = true
         connection.setFixedLengthStreamingMode(file.length())
-        connection.setRequestProperty("Content-Type", "audio/mp4")
+        connection.setRequestProperty("Content-Type", chunk.mediaType)
         try {
             FileInputStream(file).use { input ->
                 connection.outputStream.use { output -> input.copyTo(output, 1024 * 1024) }
@@ -73,7 +77,9 @@ class AudioUploadClient(context: Context) {
         val status = connection.responseCode
         val stream = if (status in 200..299) connection.inputStream else connection.errorStream
         val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-        if (status !in 200..299) throw IllegalStateException("server upload failed ($status): $body")
+        if (status !in 200..299) {
+            throw UploadException(status, "Server rejected upload (HTTP $status)")
+        }
         return JSONObject(body.ifBlank { "{}" })
     }
 

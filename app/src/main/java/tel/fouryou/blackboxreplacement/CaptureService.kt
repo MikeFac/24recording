@@ -36,12 +36,12 @@ class CaptureService : Service() {
         reconcileStaleProcessState(this)
         serviceAlive.set(true)
         repository = ChunkRepository(this)
-        UploadCoordinator.start(this)
+        UploadCoordinator.startIfEnabled(this)
         createNotificationChannel()
         controlExecutor.execute {
             try {
                 RecordingRecovery.reconcile(File(filesDir, "audio"), repository)
-                UploadCoordinator.trigger(this)
+                UploadCoordinator.triggerIfEnabled(this)
             } catch (t: Throwable) {
                 startupFailure = t
             }
@@ -102,9 +102,14 @@ class CaptureService : Service() {
                     }
                 )
                 val transcriptionProvider = runCatching {
+                    val transcriptionMode = if (TranscriptionPreferences.isLiveEnabled(this)) {
+                        TranscriptionMode.ON_DEVICE_SHERPA_ONNX
+                    } else {
+                        TranscriptionMode.OFF
+                    }
                     TranscriptionProviderFactory.create(
                         context = this,
-                        mode = TranscriptionMode.ON_DEVICE_SHERPA_ONNX,
+                        mode = transcriptionMode,
                         model = TranscriptionPreferences.getModel(this),
                         onTranscript = { event ->
                             sessionTranscriptStore.append(event)
@@ -122,7 +127,7 @@ class CaptureService : Service() {
                     repository = repository,
                     onChunkCompleted = { chunk ->
                         updateNotification("Saved chunk ${chunk.sequence + 1}")
-                        UploadCoordinator.trigger(this)
+                        UploadCoordinator.triggerIfEnabled(this)
                     },
                     onHealthChanged = { health ->
                         saveHealth(health)
