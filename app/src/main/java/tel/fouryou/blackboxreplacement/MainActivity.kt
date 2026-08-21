@@ -153,6 +153,12 @@ class MainActivity : Activity() {
         }
         content.addView(importButton, matchWrap())
 
+        val playbackButton = Button(this).apply {
+            text = "Play recordings"
+            setOnClickListener { startActivity(Intent(this@MainActivity, PlaybackActivity::class.java)) }
+        }
+        content.addView(playbackButton, matchWrap())
+
         val transcriptionLabel = TextView(this).apply {
             text = "Live transcription"
             setPadding(0, 24, 0, 4)

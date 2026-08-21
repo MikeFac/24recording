@@ -251,6 +251,23 @@ decisions separate.
 - Users can export original audio, transcript JSON, plain text, and metadata.
 - Deletion and export operations are auditable without storing the audio content in application logs.
 
+### FR-10 Local playback and audio quality review
+
+1. The app provides a playback screen for finalized local recordings.
+2. The user can select a civil calendar day and play all available local chunks
+   from that day as one chronological virtual timeline.
+3. Playback advances automatically across chunk boundaries without requiring
+   the user to select each file separately.
+4. A single seek bar spans the complete day and maps positions to the correct
+   chunk and in-file offset.
+5. Deleted local files are excluded and missing/corrupt files are reported
+   without affecting recording or upload state.
+6. Playback uses the phone's normal media speaker route and does not start or
+   stop microphone capture.
+7. The playback screen shows total duration, current position, file count, and
+   selected day so audio-quality testing can be performed directly on the
+   capture phone.
+
 ## 4. Quality and acceptance criteria
 
 The MVP is acceptable for pilot when all of the following are demonstrated on each certified phone:

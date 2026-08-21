@@ -161,6 +161,36 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
         return chunks
     }
 
+    /** Returns local audio files for one civil day, in chronological order. */
+    @Synchronized
+    fun playableChunksForDay(dayStartMs: Long, dayEndMs: Long): List<CompletedChunk> {
+        val chunks = mutableListOf<CompletedChunk>()
+        readableDatabase.query(
+            "chunks",
+            null,
+            "started_at >= ? AND started_at < ? AND state NOT IN ('LOCAL_DELETED', 'LOCAL_DELETED_UNUPLOADED')",
+            arrayOf(dayStartMs.toString(), dayEndMs.toString()),
+            null,
+            null,
+            "started_at ASC, sequence_no ASC"
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val chunk = readChunk(cursor)
+                if (File(chunk.path).isFile) chunks += chunk
+            }
+        }
+        return chunks
+    }
+
+    fun latestPlayableStartedAt(): Long? {
+        readableDatabase.rawQuery(
+            "SELECT MAX(started_at) FROM chunks WHERE state NOT IN ('LOCAL_DELETED', 'LOCAL_DELETED_UNUPLOADED') AND path != ''",
+            null
+        ).use { cursor ->
+            return if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        }
+    }
+
     @Synchronized
     fun markUploading(id: String): Boolean {
         val values = ContentValues().apply { put("state", "UPLOADING") }
