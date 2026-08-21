@@ -17,7 +17,9 @@ data class CaptureSnapshot(
     val queuedChunks: Int = 0,
     val freeBytes: Long = 0L,
     val inputUnderruns: Long = 0L,
-    val inputOverflows: Long = 0L
+    val inputOverflows: Long = 0L,
+    val instructionActive: Boolean = false,
+    val instructionStartedAt: Long? = null
 ) {
     fun asDisplayText(): String {
         val duration = startedAt?.let { ((System.currentTimeMillis() - it) / 1_000L).coerceAtLeast(0) }
@@ -29,6 +31,7 @@ data class CaptureSnapshot(
             appendLine("Queued chunks: $queuedChunks")
             appendLine("Free storage: ${freeBytes / 1_048_576L} MB")
             appendLine("Input underruns/overflows: $inputUnderruns/$inputOverflows")
+            if (instructionActive) appendLine("Instruction marker: active")
             if (!lastError.isNullOrBlank()) appendLine("Error: $lastError")
         }
     }

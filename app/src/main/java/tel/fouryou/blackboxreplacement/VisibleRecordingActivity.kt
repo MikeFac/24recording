@@ -29,6 +29,7 @@ class VisibleRecordingActivity : Activity() {
     private lateinit var explanationText: TextView
     private lateinit var elapsedText: TextView
     private lateinit var errorText: TextView
+    private lateinit var instructionButton: Button
     private lateinit var stopButton: Button
 
     private val handler = Handler(Looper.getMainLooper())
@@ -112,6 +113,32 @@ class VisibleRecordingActivity : Activity() {
             setPadding(0, (20 * density).toInt(), 0, 0)
         }
         content.addView(errorText, matchWrap())
+
+        instructionButton = Button(this).apply {
+            text = "Hold to mark instruction"
+            contentDescription = "Press and hold to mark an explicit instruction"
+            setOnClickListener {
+                val snapshot = CaptureService.snapshot(this@VisibleRecordingActivity)
+                if (snapshot.instructionActive) {
+                    sendInstructionAction(CaptureService.ACTION_END_INSTRUCTION)
+                } else {
+                    Toast.makeText(
+                        this@VisibleRecordingActivity,
+                        "Press and hold to start an instruction marker",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+            setOnLongClickListener {
+                if (CaptureService.isRecording(this@VisibleRecordingActivity)) {
+                    sendInstructionAction(CaptureService.ACTION_BEGIN_INSTRUCTION)
+                }
+                true
+            }
+        }
+        content.addView(instructionButton, matchWrap().apply {
+            topMargin = (18 * density).toInt()
+        })
 
         stopButton = Button(this).apply {
             text = "Hold to stop recording"
@@ -202,6 +229,22 @@ class VisibleRecordingActivity : Activity() {
         errorText.visibility = if (snapshot.lastError.isNullOrBlank()) View.GONE else View.VISIBLE
         stopButton.isEnabled = active
         stopButton.alpha = if (active) 1f else 0.45f
+        instructionButton.isEnabled = active
+        instructionButton.alpha = if (active) 1f else 0.45f
+        instructionButton.text = if (snapshot.instructionActive) {
+            "End instruction marker"
+        } else {
+            "Hold to mark instruction"
+        }
+        instructionButton.contentDescription = if (snapshot.instructionActive) {
+            "End explicit instruction marker"
+        } else {
+            "Press and hold to mark an explicit instruction"
+        }
+    }
+
+    private fun sendInstructionAction(action: String) {
+        startService(Intent(this, CaptureService::class.java).setAction(action))
     }
 
     private fun showStatus(color: Int, title: String, explanation: String) {

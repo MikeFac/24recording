@@ -208,6 +208,12 @@ decisions separate.
    mode, push-to-talk/instruction action, or a clear activation phrase such as
    “Assistant, remember…”. The Live transcription toggle controls capture and
    upload behaviour only; it does not make every spoken sentence an instruction.
+   The current Android implementation uses a press-and-hold action in the
+   visible recording screen to start a marker, followed by an explicit end
+   action. The marker stores exact source timestamps and an append-only audit
+   event; stopping the recording closes an active marker with a non-user-stop
+   reason. A marker makes an interval eligible for instruction handling but
+   does not directly execute a command or bypass validation.
 6. No raw audio or transcript may directly mutate long-term memory. The server
    creates evidence-backed candidate claims with source interval, speaker
    metadata, transcript excerpt, extraction model/version, and reason for

@@ -26,6 +26,8 @@ class CaptureService : Service() {
     private var engine: AudioRecorderEngine? = null
     private var frameRouter: AudioFrameRouter? = null
     private var transcriptStore: TranscriptStore? = null
+    private var instructionMarkerStore: InstructionMarkerStore? = null
+    private var activeInstruction: InstructionMarker? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var sessionId: String? = null
     private val terminalHandled = AtomicBoolean(false)
@@ -52,6 +54,8 @@ class CaptureService : Service() {
         when (intent?.action) {
             ACTION_START -> beginStart()
             ACTION_STOP -> beginStop()
+            ACTION_BEGIN_INSTRUCTION -> controlExecutor.execute { beginInstructionMarker() }
+            ACTION_END_INSTRUCTION -> controlExecutor.execute { endInstructionMarker("user_ended") }
         }
         return START_NOT_STICKY
     }
@@ -94,6 +98,7 @@ class CaptureService : Service() {
                 val outputDirectory = File(filesDir, "audio/$newSessionId")
                 val sessionTranscriptStore = TranscriptStore(File(outputDirectory, "transcript.jsonl"))
                 transcriptStore = sessionTranscriptStore
+                instructionMarkerStore = InstructionMarkerStore(File(outputDirectory, "instruction-markers.jsonl"))
                 val router = AudioFrameRouter(
                     onConsumerFailure = { name, error ->
                         mainHandler.post {
@@ -157,6 +162,7 @@ class CaptureService : Service() {
         controlExecutor.execute {
             terminalHandled.set(true)
             try {
+                endInstructionMarker("recording_stopped")
                 stopEngineIfNeeded()
                 sessionId?.let { repository.finishSession(it, System.currentTimeMillis()) }
                 setState(CaptureState.STOPPED)
@@ -176,6 +182,7 @@ class CaptureService : Service() {
     }
 
     private fun stopEngineIfNeeded() {
+        endInstructionMarker("capture_ended")
         if (engine != null) {
             engine?.stop()
         } else {
@@ -185,6 +192,51 @@ class CaptureService : Service() {
         frameRouter = null
         transcriptStore?.close()
         transcriptStore = null
+        instructionMarkerStore?.close()
+        instructionMarkerStore = null
+    }
+
+    private fun beginInstructionMarker() {
+        if (activeInstruction != null) return
+        if (state(this) != CaptureState.RECORDING.name) {
+            updateNotification("Instruction marker unavailable · recording is not active")
+            return
+        }
+        val currentSession = sessionId ?: return
+        val marker = InstructionMarker(
+            id = UUID.randomUUID().toString(),
+            sessionId = currentSession,
+            startedAtEpochMs = System.currentTimeMillis(),
+            startedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
+        )
+        activeInstruction = marker
+        instructionMarkerStore?.appendStarted(marker)
+        saveActiveInstruction(marker)
+        updateNotification("Recording · instruction marker active")
+    }
+
+    private fun endInstructionMarker(reason: String) {
+        val marker = activeInstruction ?: return
+        val endedAtEpochMs = System.currentTimeMillis()
+        val endedAtElapsedMs = android.os.SystemClock.elapsedRealtime()
+        instructionMarkerStore?.appendEnded(marker, endedAtEpochMs, endedAtElapsedMs, reason)
+        activeInstruction = null
+        clearActiveInstruction()
+        updateNotification("Recording · instruction marker saved")
+    }
+
+    private fun saveActiveInstruction(marker: InstructionMarker) {
+        getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit()
+            .putBoolean(KEY_INSTRUCTION_ACTIVE, true)
+            .putLong(KEY_INSTRUCTION_STARTED_AT, marker.startedAtEpochMs)
+            .apply()
+    }
+
+    private fun clearActiveInstruction() {
+        getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit()
+            .remove(KEY_INSTRUCTION_ACTIVE)
+            .remove(KEY_INSTRUCTION_STARTED_AT)
+            .apply()
     }
 
     private fun handleEngineFailure(error: Throwable) {
@@ -225,6 +277,8 @@ class CaptureService : Service() {
                 remove(KEY_STARTED_AT)
                 remove(KEY_SESSION_ID)
                 remove(KEY_ERROR)
+                remove(KEY_INSTRUCTION_ACTIVE)
+                remove(KEY_INSTRUCTION_STARTED_AT)
             }
         }.apply()
     }
@@ -314,6 +368,8 @@ class CaptureService : Service() {
     companion object {
         const val ACTION_START = "tel.fouryou.blackboxreplacement.action.START"
         const val ACTION_STOP = "tel.fouryou.blackboxreplacement.action.STOP"
+        const val ACTION_BEGIN_INSTRUCTION = "tel.fouryou.blackboxreplacement.action.BEGIN_INSTRUCTION"
+        const val ACTION_END_INSTRUCTION = "tel.fouryou.blackboxreplacement.action.END_INSTRUCTION"
 
         private const val PREFERENCES = "capture_state"
         private const val KEY_STATE = "state"
@@ -322,6 +378,8 @@ class CaptureService : Service() {
         private const val KEY_ERROR = "error"
         private const val KEY_UNDERRUNS = "input_underruns"
         private const val KEY_OVERFLOWS = "input_overflows"
+        private const val KEY_INSTRUCTION_ACTIVE = "instruction_active"
+        private const val KEY_INSTRUCTION_STARTED_AT = "instruction_started_at"
         private const val CHANNEL_ID = "audio_capture"
         private const val NOTIFICATION_ID = 2401
         private val serviceAlive = AtomicBoolean(false)
@@ -356,7 +414,9 @@ class CaptureService : Service() {
                 queuedChunks = repository.countChunks("READY"),
                 freeBytes = appContext.filesDir.usableSpace,
                 inputUnderruns = preferences.getLong(KEY_UNDERRUNS, 0L),
-                inputOverflows = preferences.getLong(KEY_OVERFLOWS, 0L)
+                inputOverflows = preferences.getLong(KEY_OVERFLOWS, 0L),
+                instructionActive = preferences.getBoolean(KEY_INSTRUCTION_ACTIVE, false),
+                instructionStartedAt = preferences.getLong(KEY_INSTRUCTION_STARTED_AT, 0L).takeIf { it > 0L }
             )
             repository.closeQuietly()
             return snapshot
