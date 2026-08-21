@@ -15,18 +15,13 @@ import android.text.InputType
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
-import android.widget.Spinner
-import android.widget.Switch
 import android.widget.TextView
-import android.widget.ArrayAdapter
 import android.widget.Toast
 
 class MainActivity : Activity() {
     private lateinit var stateText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
-    private lateinit var transcriptionModelSpinner: Spinner
-    private lateinit var liveTranscriptionSwitch: Switch
     private lateinit var uploadStatusText: TextView
     private var startAfterPermissionGrant = false
     private val handler = Handler(Looper.getMainLooper())
@@ -158,53 +153,6 @@ class MainActivity : Activity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, PlaybackActivity::class.java)) }
         }
         content.addView(playbackButton, matchWrap())
-
-        val transcriptionLabel = TextView(this).apply {
-            text = "Live transcription"
-            setPadding(0, 24, 0, 4)
-        }
-        content.addView(transcriptionLabel, matchWrap())
-
-        liveTranscriptionSwitch = Switch(this).apply {
-            text = "Enable live transcription + automatic upload"
-            isChecked = TranscriptionPreferences.isLiveEnabled(this@MainActivity)
-            setOnCheckedChangeListener { _, enabled ->
-                TranscriptionPreferences.setLiveEnabled(this@MainActivity, enabled)
-                transcriptionModelSpinner.isEnabled = enabled
-                if (enabled) {
-                    UploadCoordinator.triggerIfEnabled(this@MainActivity)
-                } else {
-                    UploadCoordinator.cancel(this@MainActivity)
-                }
-            }
-        }
-        content.addView(liveTranscriptionSwitch, matchWrap())
-
-        transcriptionModelSpinner = Spinner(this).apply {
-            val models = listOf(
-                LocalTranscriptionModel.MOONSHINE_TINY,
-                LocalTranscriptionModel.ZIPFORMER_STREAMING
-            )
-            adapter = ArrayAdapter(
-                this@MainActivity,
-                android.R.layout.simple_spinner_item,
-                models.map { transcriptionLabel(it) }
-            ).apply { setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item) }
-            setSelection(models.indexOf(TranscriptionPreferences.getModel(this@MainActivity)).coerceAtLeast(0))
-            setOnItemSelectedListener(object : android.widget.AdapterView.OnItemSelectedListener {
-                override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
-                override fun onItemSelected(
-                    parent: android.widget.AdapterView<*>?,
-                    view: View?,
-                    position: Int,
-                    id: Long
-                ) {
-                    TranscriptionPreferences.setModel(this@MainActivity, models[position])
-                }
-            })
-        }
-        transcriptionModelSpinner.isEnabled = liveTranscriptionSwitch.isChecked
-        content.addView(transcriptionModelSpinner, matchWrap())
 
         val note = TextView(this).apply {
             text = "Recording is deliberately visible. The notification remains active while audio capture is running."
@@ -354,11 +302,11 @@ class MainActivity : Activity() {
     private fun showRetentionDialog() {
         val repository = ChunkRepository(this)
         val safe = try {
-            repository.deletionPreview(true, System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000)
+            repository.deletionPreview(true)
         } finally { repository.closeQuietly() }
         AlertDialog.Builder(this)
             .setTitle("Local recordings")
-            .setMessage("Uploaded older than 7 days: ${safe.count} files (${formatBytes(safe.bytes)}).\n\nUnuploaded files are never removed by the safe option.")
+            .setMessage("Uploaded local files: ${safe.count} files (${formatBytes(safe.bytes)}).\n\nUnuploaded files are never removed by the safe option.")
             .setNegativeButton("Close", null)
             .setNeutralButton("Delete uploaded") { _, _ -> confirmDeletion(true, safe) }
             .setPositiveButton("Delete all local") { _, _ ->
@@ -384,7 +332,7 @@ class MainActivity : Activity() {
                 try {
                     val deleted = repo.deleteLocalChunks(
                         onlyUploaded,
-                        if (onlyUploaded) System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000 else null
+                        null
                     )
                     Toast.makeText(this, "Deleted ${deleted.count} local files", Toast.LENGTH_LONG).show()
                 } catch (error: Throwable) {
@@ -444,12 +392,6 @@ class MainActivity : Activity() {
         LinearLayout.LayoutParams.MATCH_PARENT,
         LinearLayout.LayoutParams.WRAP_CONTENT
     )
-
-    private fun transcriptionLabel(model: LocalTranscriptionModel): String = when (model) {
-        LocalTranscriptionModel.OFF -> "Off"
-        LocalTranscriptionModel.MOONSHINE_TINY -> "Moonshine Tiny · local"
-        LocalTranscriptionModel.ZIPFORMER_STREAMING -> "Zipformer · local streaming"
-    }
 
     companion object {
         private const val REQUEST_PERMISSIONS = 100

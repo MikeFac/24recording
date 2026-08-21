@@ -37,5 +37,4 @@ android {
 
 dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.1")
-    implementation("com.github.k2-fsa:sherpa-onnx:1.13.4")
 }

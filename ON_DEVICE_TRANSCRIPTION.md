@@ -1,7 +1,13 @@
-# On-device transcription
+# On-device transcription — historical experiment
 
-The Android app uses sherpa-onnx behind the `TranscriptionProvider` interface.
-The app offers two local model choices: Moonshine Tiny and Zipformer Streaming.
+Local transcription has been removed from the Android phone build. Testing on a
+Samsung A53 with an exposed USB-C lapel microphone produced occasional correct
+results but unacceptable errors on simple phrases, so it is not currently a
+useful or reliable product feature. The notes below preserve the previous model
+installation details in case a materially better model is evaluated later.
+
+The former Android implementation used sherpa-onnx with two local model choices:
+Moonshine Tiny and Zipformer Streaming.
 No audio is sent to a network service by either provider.
 
 Moonshine Tiny is processed in bounded five-second windows through sherpa-onnx's

@@ -17,11 +17,11 @@ object UploadCoordinator {
     private const val WORK_NAME = "audio-upload"
 
     fun startIfEnabled(context: Context) {
-        if (TranscriptionPreferences.isLiveEnabled(context)) triggerIfEnabled(context)
+        if (UploadPreferences.get(context).enabled()) triggerIfEnabled(context)
     }
 
     fun triggerIfEnabled(context: Context) {
-        if (TranscriptionPreferences.isLiveEnabled(context)) enqueue(context, manual = false)
+        if (UploadPreferences.get(context).enabled()) enqueue(context, manual = false)
     }
 
     /** Explicit user action; permitted even when automatic upload is disabled. */
@@ -51,7 +51,7 @@ class AudioUploadWorker(context: Context, params: WorkerParameters) : CoroutineW
         try {
             repository.resetUploadingChunks()
             while (true) {
-                if (!manual && !TranscriptionPreferences.isLiveEnabled(appContext)) return Result.success()
+                if (!manual && !UploadPreferences.get(appContext).enabled()) return Result.success()
                 val chunks = repository.readyChunks(limit = 2)
                 if (chunks.isEmpty()) {
                     UploadStatusStore.markSuccess(appContext, repository.countChunks("UPLOADED"))

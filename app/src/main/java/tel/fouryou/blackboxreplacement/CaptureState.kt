@@ -18,6 +18,7 @@ data class CaptureSnapshot(
     val freeBytes: Long = 0L,
     val inputUnderruns: Long = 0L,
     val inputOverflows: Long = 0L,
+    val inputRouteName: String = "Unknown",
     val instructionActive: Boolean = false,
     val instructionStartedAt: Long? = null
 ) {
@@ -31,6 +32,7 @@ data class CaptureSnapshot(
             appendLine("Queued chunks: $queuedChunks")
             appendLine("Free storage: ${freeBytes / 1_048_576L} MB")
             appendLine("Input underruns/overflows: $inputUnderruns/$inputOverflows")
+            appendLine("Actual audio input: $inputRouteName")
             if (instructionActive) appendLine("Instruction marker: active")
             if (!lastError.isNullOrBlank()) appendLine("Error: $lastError")
         }

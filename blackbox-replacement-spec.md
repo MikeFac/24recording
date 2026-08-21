@@ -116,7 +116,10 @@ The web/mobile memory interface is outside the capture-app MVP but the backend m
 4. The app never deletes a local original until the server has acknowledged checksum and durable object storage.
 5. The app warns at configurable storage thresholds, with defaults of 5 GB and 2 GB free.
 6. If the storage safety threshold is reached, the app stops starting new sessions and continues the active session only if enough space remains to safely finalize its current chunk. It must never silently delete unuploaded recordings.
-7. Local retention is configurable after acknowledged upload: retain originals, retain for N days, or delete immediately. Default pilot policy: retain for 7 days.
+7. Local retention is configurable after acknowledged upload: retain originals,
+   retain for N days, or delete immediately. The explicit **Delete uploaded**
+   action removes all locally retained files already acknowledged by the server;
+   it does not apply an age filter.
 
 ### FR-5 Upload and synchronization
 
@@ -162,12 +165,12 @@ The app must alert locally when the microphone is disconnected, input becomes si
 
 ### FR-8 Whisper transcription
 
-1. Local Android speech-to-text is an optional mode, not the default or a guaranteed processing path. Local Whisper `tiny` was not sufficiently reliable for trouser-pocket recordings, and larger models may not process continuously on the target phone in a timely way. A high-quality microphone/input setup may make local transcription viable, so the option remains available behind device and quality checks.
-2. Live transcription is an explicit user-controlled feature, separate from recording. When enabled, the user chooses cloud or local mode. Cloud mode sends speech audio to a selected streaming provider and receives partial and final timestamped events. Local mode keeps audio and transcript processing on the device. When live transcription is disabled, recording continues locally and no live transcription audio is sent.
+1. Local Android speech-to-text was tested with the Samsung A53, including an exposed USB-C lapel microphone, using sherpa-onnx Moonshine Tiny. It produced plausible text intermittently but made material errors on simple phrases and is inadequate for reliable work at this stage. The phone must not present or use local transcription as a production feature. The experiment is retained as a documented negative result; it may be reconsidered only after a materially better model and a new device-quality evaluation.
+2. Live transcription is an explicit user-controlled feature, separate from recording. The Android capture app does not perform live transcription. A future consented cloud provider may receive speech audio and return partial and final timestamped events. When live transcription is unavailable or disabled, recording continues locally.
 3. A lightweight local voice activity detector may gate the cloud stream; this is not local transcription. After a configurable period without speech (default: 60 seconds), the client closes the cloud session while continuing to record. It must actually close the session because streaming providers may bill session duration even when no audio is flowing.
 4. The first live provider spike should use AssemblyAI Universal Streaming over WebSocket. The provider adapter must remain replaceable so Deepgram, Google Cloud Speech-to-Text, or another consented provider can be evaluated without changing capture or transcript entities.
 5. For completed recordings, the server may use a cloud pre-recorded transcription API or a server-hosted Whisper model. The batch path may strip non-speaking regions first, but it must retain original timestamps and preserve the source audio.
-6. The Android built-in `SpeechRecognizer` and on-device Whisper/sherpa-onnx providers are optional implementation candidates. They require a bounded feasibility test for continuous capture, latency, battery, memory, background behavior, privacy, and accuracy on certified devices. They must not silently replace cloud transcription when they fall behind or fail.
+6. The Android built-in `SpeechRecognizer` and on-device Whisper/sherpa-onnx providers are not included in the current phone build. Any future reconsideration requires a bounded feasibility test for continuous capture, latency, battery, memory, background behavior, privacy, and accuracy on certified devices.
 7. Language is auto-detected, with an account/session override.
 8. Output includes segment start/end times, text, provider/model/version, language, confidence where available, and the original audio time range.
 9. Adjacent windows are merged without losing timestamps. Context from neighboring windows may be supplied to reduce boundary errors, but duplicated text must be removed deterministically.
@@ -175,12 +178,13 @@ The app must alert locally when the microphone is disconnected, input becomes si
 11. Transcription is asynchronous and retried safely. A failed chunk does not block later chunks.
 12. The transcript is linked to the original chunk and cleaned derivative so the user can play back the source interval.
 
+13. The Android app does not expose local transcription controls. The complete local recording remains authoritative; transcription is a later cloud/server processing concern.
+
 ### FR-8a Live transcription control and cost/privacy protection
 
-1. The UI has an explicit **Live transcription** toggle and a mode selector: `Cloud`, `On device`, or `Off`.
-2. Cloud mode clearly indicates that audio is being sent to a third party. On-device mode clearly indicates that audio is not being uploaded for transcription.
-3. Turning live transcription off closes the provider session or local recognizer but does not stop recording.
-4. A one-minute no-speech timeout closes a cloud provider session; subsequent speech starts a new session with a short local pre-roll. On-device mode may pause decoding during silence without closing the capture service.
+1. A future cloud implementation must have an explicit **Live transcription** toggle and clearly indicate that audio is being sent to a third party.
+2. Turning live transcription off closes the provider session but does not stop recording.
+3. A one-minute no-speech timeout closes a cloud provider session; subsequent speech starts a new session with a short local pre-roll.
 5. The app reports live-transcription state separately from recording state: `OFF`, `CONNECTING`, `LIVE`, `PAUSED_NO_SPEECH`, `OFFLINE`, `UNAVAILABLE`, and `ERROR`.
 6. The app maintains the full local recording as the source of truth. Live transcript events are best-effort conveniences and may be repaired later through batch processing.
 7. Provider usage, session duration, failures, device load, battery impact, and estimated cloud cost are recorded for account controls and quality evaluation.

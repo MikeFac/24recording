@@ -28,7 +28,8 @@ class AudioRecorderEngine(
     private val onHealthChanged: (Health) -> Unit,
     private val onFailure: (Throwable) -> Unit,
     private val frameRouter: AudioFrameRouter = AudioFrameRouter(),
-    private val audioInput: AudioInputSource = AndroidPhoneMicrophoneSource()
+    private val audioInput: AudioInputSource = AndroidPhoneMicrophoneSource(),
+    private val onInputRouteChanged: (String) -> Unit = {}
 ) {
     data class Health(
         val inputUnderruns: Long = 0,
@@ -64,6 +65,7 @@ class AudioRecorderEngine(
         }
         check(audioInput.descriptor.channels == 1) { "Audio input must be mono" }
         audioInput.start()
+        onInputRouteChanged(audioInput.activeRouteName)
 
         // Keep one wall-clock anchor for the session, then derive every chunk timestamp
         // from the monotonic clock. User/NTP wall-clock changes cannot distort chronology.
@@ -106,6 +108,7 @@ class AudioRecorderEngine(
         var frameStartedAtElapsedNanos = SystemClock.elapsedRealtimeNanos()
         try {
             while (!stopRequested.get()) {
+                onInputRouteChanged(audioInput.activeRouteName)
                 if (filled == 0) frameStartedAtElapsedNanos = SystemClock.elapsedRealtimeNanos()
                 val read = audioInput.read(
                     pcm,

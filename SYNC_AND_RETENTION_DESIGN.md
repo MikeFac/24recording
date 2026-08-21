@@ -39,7 +39,8 @@ CAPTURING -> READY -> UPLOADING -> UPLOADED -> LOCAL_DELETED
                          +-------------+-- retry with backoff
 
 READY/UPLOADING never qualify for the safe deletion action.
-UPLOADED qualifies only after the retention age and explicit confirmation.
+UPLOADED qualifies for the explicit uploaded-file deletion action after user
+confirmation.
 LOCAL_DELETED retains metadata but no longer has a local audio payload.
 ```
 
@@ -95,7 +96,7 @@ Sync Now after correction.
 ## Retention and deletion
 
 The retention screen shows counts and sizes by state. The safe delete action
-defaults to “uploaded originals older than 7 days” and requires confirmation
+means “all locally retained uploaded originals” and requires confirmation
 showing the number of files and bytes. The query is restricted to
 `state = UPLOADED`; a file is deleted only after a final existence/size check
 and is then marked `LOCAL_DELETED`. If deletion fails, the row remains
@@ -129,7 +130,7 @@ bytes prevents loading an entire recording into memory.
   `CAPTURING` payload.
 - Explicit all-local deletion warns about and confirms permanent loss, then
   marks deleted unuploaded rows as `LOCAL_DELETED_UNUPLOADED`.
-- A 7-day retention deletion reports exactly how many `UPLOADED` files and
-  bytes were removed and leaves their metadata in `LOCAL_DELETED`.
+- Uploaded-file deletion reports exactly how many `UPLOADED` files and bytes
+  were removed and leaves their metadata in `LOCAL_DELETED`.
 - Existing `READY` historical chunks are discovered and uploaded after the
   update without requiring a new recording session.

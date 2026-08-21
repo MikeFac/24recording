@@ -242,16 +242,20 @@ class ChunkRepository(context: Context) : SQLiteOpenHelper(
             args += it.toString()
         }
         val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
-        val rows = mutableListOf<Pair<String, String>>()
-        readableDatabase.query("chunks", arrayOf("id", "path"), selection, args.toTypedArray(), null, null, null)
-            .use { cursor -> while (cursor.moveToNext()) rows += cursor.getString(0) to cursor.getString(1) }
+        val rows = mutableListOf<Triple<String, String, String>>()
+        readableDatabase.query("chunks", arrayOf("id", "path", "state"), selection, args.toTypedArray(), null, null, null)
+            .use { cursor ->
+                while (cursor.moveToNext()) {
+                    rows += Triple(cursor.getString(0), cursor.getString(1), cursor.getString(2))
+                }
+            }
         var deleted = 0
         var bytes = 0L
-        for ((id, path) in rows) {
+        for ((id, path, previousState) in rows) {
             val file = File(path)
             val length = file.length()
             check(!file.exists() || file.delete()) { "Could not delete local recording $id" }
-            val state = if (onlyUploaded) "LOCAL_DELETED" else "LOCAL_DELETED_UNUPLOADED"
+            val state = if (previousState == "UPLOADED") "LOCAL_DELETED" else "LOCAL_DELETED_UNUPLOADED"
             writableDatabase.update(
                 "chunks", ContentValues().apply { put("state", state) }, "id = ?", arrayOf(id)
             )

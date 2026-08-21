@@ -15,6 +15,7 @@ import kotlin.math.max
  */
 interface AudioInputSource : AutoCloseable {
     val descriptor: AudioInputDescriptor
+    val activeRouteName: String
     fun start()
     fun read(buffer: ByteArray, offset: Int, size: Int): Int
     fun stop()
@@ -35,6 +36,13 @@ class AndroidPhoneMicrophoneSource : AudioInputSource {
     )
 
     private var recorder: AudioRecord? = null
+
+    override val activeRouteName: String
+        get() {
+            val routed = recorder?.routedDevice
+            val product = routed?.productName?.toString()?.takeIf { it.isNotBlank() }
+            return product ?: descriptor.displayName
+        }
 
     @SuppressLint("MissingPermission")
     override fun start() {

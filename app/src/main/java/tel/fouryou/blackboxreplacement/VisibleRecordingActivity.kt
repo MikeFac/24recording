@@ -196,7 +196,7 @@ class VisibleRecordingActivity : Activity() {
             CaptureState.RECORDING -> showStatus(
                 color = RECORDING_RED,
                 title = "NOW RECORDING",
-                explanation = "Audio is being recorded by this phone."
+                explanation = "Audio is being recorded by this phone.\nInput: ${snapshot.inputRouteName}"
             )
             CaptureState.STARTING -> showStatus(
                 color = STARTING_AMBER,

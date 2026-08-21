@@ -25,7 +25,6 @@ class CaptureService : Service() {
     private lateinit var repository: ChunkRepository
     private var engine: AudioRecorderEngine? = null
     private var frameRouter: AudioFrameRouter? = null
-    private var transcriptStore: TranscriptStore? = null
     private var instructionMarkerStore: InstructionMarkerStore? = null
     private var activeInstruction: InstructionMarker? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -96,8 +95,6 @@ class CaptureService : Service() {
                 repository.createSession(newSessionId, startedAt)
                 acquireWakeLock()
                 val outputDirectory = File(filesDir, "audio/$newSessionId")
-                val sessionTranscriptStore = TranscriptStore(File(outputDirectory, "transcript.jsonl"))
-                transcriptStore = sessionTranscriptStore
                 instructionMarkerStore = InstructionMarkerStore(File(outputDirectory, "instruction-markers.jsonl"))
                 val router = AudioFrameRouter(
                     onConsumerFailure = { name, error ->
@@ -106,25 +103,6 @@ class CaptureService : Service() {
                         }
                     }
                 )
-                val transcriptionProvider = runCatching {
-                    val transcriptionMode = if (TranscriptionPreferences.isLiveEnabled(this)) {
-                        TranscriptionMode.ON_DEVICE_SHERPA_ONNX
-                    } else {
-                        TranscriptionMode.OFF
-                    }
-                    TranscriptionProviderFactory.create(
-                        context = this,
-                        mode = transcriptionMode,
-                        model = TranscriptionPreferences.getModel(this),
-                        onTranscript = { event ->
-                            sessionTranscriptStore.append(event)
-                            if (event.isFinal) updateNotification("Recording · live transcription active")
-                        }
-                    )
-                }.getOrElse {
-                    DisabledTranscriptionProvider(TranscriptionMode.ON_DEVICE_SHERPA_ONNX)
-                }
-                router.subscribe("transcription", transcriptionProvider)
                 frameRouter = router
                 engine = AudioRecorderEngine(
                     outputDirectory = outputDirectory,
@@ -140,7 +118,8 @@ class CaptureService : Service() {
                     onFailure = { error ->
                         mainHandler.post { handleEngineFailure(error) }
                     },
-                    frameRouter = router
+                    frameRouter = router,
+                    onInputRouteChanged = { route -> saveInputRoute(route) }
                 )
                 engine!!.start()
                 setState(CaptureState.RECORDING, startedAt = startedAt, session = newSessionId)
@@ -190,8 +169,6 @@ class CaptureService : Service() {
         }
         engine = null
         frameRouter = null
-        transcriptStore?.close()
-        transcriptStore = null
         instructionMarkerStore?.close()
         instructionMarkerStore = null
     }
@@ -297,6 +274,12 @@ class CaptureService : Service() {
             .apply()
     }
 
+    private fun saveInputRoute(route: String) {
+        getSharedPreferences(PREFERENCES, MODE_PRIVATE).edit()
+            .putString(KEY_INPUT_ROUTE, route)
+            .apply()
+    }
+
     private fun acquireWakeLock() {
         val manager = getSystemService(POWER_SERVICE) as PowerManager
         wakeLock = manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "$packageName:capture").apply {
@@ -378,6 +361,7 @@ class CaptureService : Service() {
         private const val KEY_ERROR = "error"
         private const val KEY_UNDERRUNS = "input_underruns"
         private const val KEY_OVERFLOWS = "input_overflows"
+        private const val KEY_INPUT_ROUTE = "input_route"
         private const val KEY_INSTRUCTION_ACTIVE = "instruction_active"
         private const val KEY_INSTRUCTION_STARTED_AT = "instruction_started_at"
         private const val CHANNEL_ID = "audio_capture"
@@ -415,6 +399,7 @@ class CaptureService : Service() {
                 freeBytes = appContext.filesDir.usableSpace,
                 inputUnderruns = preferences.getLong(KEY_UNDERRUNS, 0L),
                 inputOverflows = preferences.getLong(KEY_OVERFLOWS, 0L),
+                inputRouteName = preferences.getString(KEY_INPUT_ROUTE, "Unknown") ?: "Unknown",
                 instructionActive = preferences.getBoolean(KEY_INSTRUCTION_ACTIVE, false),
                 instructionStartedAt = preferences.getLong(KEY_INSTRUCTION_STARTED_AT, 0L).takeIf { it > 0L }
             )
